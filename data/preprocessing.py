@@ -124,7 +124,7 @@ class DataPreprocessing:
 
         return train_data, train_label, test_data, test_label
 
-    def windowing(self, window_size=None, hop_size=None):
+    def create_data(self, window_size=None, hop_size=None):
         """
         Cut time series into segment with given window_size and hop_size
         """
@@ -157,11 +157,16 @@ class DataPreprocessing:
                     windows.append(ts_window)
                     label_windows.append(lb)
 
-        return train_windows, train_label_windows, test_windows, test_label_windows
-        # print("train_label_windows:", len(train_label_windows))
-        # print("test_label_windows:", len(test_label_windows))
-        # print("train_windows:", len(train_windows))
-        # print("test_windows:", len(test_windows))
+        print("train_label_windows:", len(train_label_windows))
+        print("test_label_windows:", len(test_label_windows))
+        print("train_windows:", len(train_windows))
+        print("test_windows:", len(test_windows))
+        return (
+            np.array(train_windows),
+            np.array(train_label_windows),
+            np.array(test_windows),
+            np.array(test_label_windows),
+        )
 
     def load_data(self, window_size=None, hop_size=None):
         """
@@ -172,9 +177,37 @@ class DataPreprocessing:
             window_size = self.fs
         if hop_size is None:
             hop_size = self.fs
-            
+
         # check if data available:
-        name_data = 1
+        name_train_data = "train_data_{}_{}.npy".format(window_size, hop_size)
+        name_train_label = "train_label_{}_{}.npy".format(window_size, hop_size)
+        name_test_data = "test_data_{}_{}.npy".format(window_size, hop_size)
+        name_test_label = "test_label_{}_{}.npy".format(window_size, hop_size)
+
+        name = [name_train_data, name_train_label, name_test_data, name_test_label]
+        path_data_files = [os.path.join(self.data_path, i) for i in name]
+
+        check_data_available = [
+            True if i in os.listdir(self.data_path) else False for i in name
+        ]
+
+        if all(check_data_available):
+            train_data, train_label, test_data, test_label = [
+                np.load(i) for i in path_data_files
+            ]
+
+        # if not create it and saved it
+        else:
+            train_data, train_label, test_data, test_label = self.create_data(
+                window_size=window_size, hop_size=hop_size
+            )
+            np.save(name_train_data, train_data)
+            np.save(name_train_label, train_label)
+            np.save(name_test_data, test_data)
+            np.save(name_test_label, test_label)
+
+        return train_data, train_label, test_data, test_label
+
 
 if __name__ == "__main__":
 
@@ -193,5 +226,7 @@ if __name__ == "__main__":
     # len_ts = data_preprocessing.len_ts
     # print("len_ts:", len_ts)
 
-    load_data = data_preprocessing.windowing()
-    print("load_data:", load_data)
+    # load_data = data_preprocessing.create_data()
+    # print("load_data:", load_data)
+
+    check = data_preprocessing.load_data()
