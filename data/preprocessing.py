@@ -193,10 +193,10 @@ class DataPreprocessing:
             train_data, train_label, test_data, test_label = self.create_data(
                 window_size=window_size, hop_size=hop_size
             )
-            np.save(name_train_data, train_data)
-            np.save(name_train_label, train_label)
-            np.save(name_test_data, test_data)
-            np.save(name_test_label, test_label)
+            np.save(path_data_files[0], train_data)
+            np.save(path_data_files[1], train_label)
+            np.save(path_data_files[2], test_data)
+            np.save(path_data_files[3], test_label)
 
         return train_data, train_label, test_data, test_label
 
