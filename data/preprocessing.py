@@ -157,10 +157,6 @@ class DataPreprocessing:
                     windows.append(ts_window)
                     label_windows.append(lb)
 
-        print("train_label_windows:", len(train_label_windows))
-        print("test_label_windows:", len(test_label_windows))
-        print("train_windows:", len(train_windows))
-        print("test_windows:", len(test_windows))
         return (
             np.array(train_windows),
             np.array(train_label_windows),
