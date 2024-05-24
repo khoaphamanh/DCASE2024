@@ -79,8 +79,8 @@ class DataPreprocessing:
 
         unique_labels = []
 
-        for i, machine_path in enumerate(self.machines_path):
-            for type in ["train", "test"]:
+        for type in ["train", "test"]:
+            for i, machine_path in enumerate(self.machines_path):
                 type_path = os.path.join(machine_path, type)
                 name_ts = os.listdir(type_path)
                 for name in name_ts:
@@ -98,19 +98,15 @@ class DataPreprocessing:
                     if name_file not in unique_labels:
                         unique_labels.append(name_file)
 
-                    # get data instance
+                    # get data instances and labels
                     name_path = os.path.join(type_path, name)
                     fs, ts = wavfile.read(name_path)
 
                     if type == "train":
                         train_data.append(ts)
-                    else:
-                        test_data.append(ts)
-
-                    # get labels
-                    if type == "train":
                         train_label.append(name_file)
                     else:
+                        test_data.append(ts)
                         test_label.append(name_file)
 
         # nummerize the labels
@@ -220,5 +216,18 @@ if __name__ == "__main__":
 
     # load_data = data_preprocessing.create_data()
     # print("load_data:", load_data)
+    # label_to_num = data_preprocessing.read_data()
 
-    check = data_preprocessing.load_data()
+    train_data, train_label, test_data, test_label = data_preprocessing.load_data()
+    unique_train = np.unique(train_label)
+    print("unique_train len:", len(unique_train))
+    print("unique_train:", unique_train)
+    print()
+    unique_test = np.unique(test_label)
+    print("unique_test len:", len(unique_test))
+    print("unique_test:", unique_test)
+
+    print(train_data[0])
+    print(train_data[1])
+    print(train_label[0])
+    print(train_label[1])
