@@ -1,5 +1,4 @@
 import os
-import pandas as pd
 import numpy as np
 from scipy.io import wavfile
 
@@ -44,28 +43,6 @@ class DataPreprocessing:
             * self.fs,
             ("ToyCar", "ToyTrain"): 12 * self.fs,
         }
-
-    def get_attribute(self):
-        """
-        Get all attributes of each machines
-        return: dict {machine:attribute}
-        """
-        attribute_dict = {}
-        for i in range(len(self.machines)):
-            m = self.machines[i]
-            att_file = self.attribute_file_path[i]
-            attribute_dict[m] = {"train": [], "test": []}
-
-            att_df = pd.read_csv(att_file)
-            col = att_df.iloc[:, 0]
-            for name_ts in col:
-                name_ts_split = name_ts.split("/")[-1].replace(".wav", "")
-                print("name_ts_split:", name_ts_split)
-                name_ts_split = name_ts_split.split("_")
-
-                print("name_ts_split:", name_ts_split)
-                print()
-                break
 
     def read_data(self):
         """
