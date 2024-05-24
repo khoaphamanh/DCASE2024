@@ -13,10 +13,6 @@ directory_path = os.path.dirname(file_path)
 data_dir = "10902294"
 raw_data_path = os.path.join(os.path.dirname(directory_path), data_dir)
 
-# print("File path:", file_path)
-# print("Directory path:", directory_path)
-# print("data_path:", raw_data_path)
-
 
 class DataPreprocessing:
     def __init__(
