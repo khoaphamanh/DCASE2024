@@ -133,7 +133,7 @@ class DataPreprocessing:
             np.array(test_label_windows),
         )
 
-    def load_data(self, window_size=None, hop_size=None):
+    def load_data(self, window_size=None, hop_size=None, train=True, test=True):
         """
         load data if data already availabel, else will read, windowing, saved and load data
         """
@@ -171,7 +171,10 @@ class DataPreprocessing:
             np.save(path_data_files[2], test_data)
             np.save(path_data_files[3], test_label)
 
-        return train_data, train_label, test_data, test_label
+        if train == True and test == True:
+            return train_data, train_label, test_data, test_label
+        elif train == True and test == False:
+            return train_data, train_label
 
 
 if __name__ == "__main__":
