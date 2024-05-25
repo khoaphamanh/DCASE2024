@@ -15,6 +15,9 @@ data_preprocessing = DataPreprocessing(raw_data_path=raw_data_path)
 train_data, train_label = data_preprocessing.load_data(train=True, test=False)
 fs = data_preprocessing.fs
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("device:", device)
+
 processor = Wav2Vec2FeatureExtractor.from_pretrained("facebook/wav2vec2-xls-r-300m")
 
 # Load the model
