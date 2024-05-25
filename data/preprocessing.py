@@ -172,9 +172,14 @@ class DataPreprocessing:
             np.save(path_data_files[3], test_label)
 
         if train == True and test == True:
-            return train_data, train_label, test_data, test_label
+            return (
+                train_data.astype(np.float32),
+                train_label.astype(np.float32),
+                test_data.astype(np.float32),
+                test_label.astype(np.float32),
+            )
         elif train == True and test == False:
-            return train_data, train_label
+            return train_data.astype(np.float32), train_label.astype(np.float32)
 
 
 if __name__ == "__main__":
