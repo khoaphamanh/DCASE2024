@@ -99,7 +99,7 @@ class DataPreprocessing:
         """
         # default window_size and hop_size if not given
         if window_size is None:
-            window_size = self.fs
+            window_size = self.fs*2
         if hop_size is None:
             hop_size = self.fs
 
@@ -139,7 +139,7 @@ class DataPreprocessing:
         """
         # default window_size and hop_size if not given
         if window_size is None:
-            window_size = self.fs
+            window_size = self.fs*2
         if hop_size is None:
             hop_size = self.fs
 
@@ -202,8 +202,10 @@ if __name__ == "__main__":
     # load_data = data_preprocessing.create_data()
     # print("load_data:", load_data)
     # label_to_num = data_preprocessing.read_data()
-
+    fs = 16000
     train_data, train_label, test_data, test_label = data_preprocessing.load_data()
+
+    print("train_data shape:", train_data.shape)
     unique_train = np.unique(train_label)
     print("unique_train len:", len(unique_train))
     print("unique_train:", unique_train)
