@@ -182,12 +182,12 @@ class DataPreprocessing:
         if train == True and test == True:
             return (
                 train_data.astype(np.float32),
-                train_label.astype(np.float32),
+                train_label.astype(np.int32),
                 test_data.astype(np.float32),
-                test_label.astype(np.float32),
+                test_label.astype(np.int32),
             )
         elif train == True and test == False:
-            return train_data.astype(np.float32), train_label.astype(np.float32)
+            return train_data.astype(np.float32), train_label.astype(np.int32)
 
 
 if __name__ == "__main__":
@@ -212,6 +212,7 @@ if __name__ == "__main__":
     # label_to_num = data_preprocessing.read_data()
     fs = 16000
     train_data, train_label, test_data, test_label = data_preprocessing.load_data()
+    print("train_label:", train_label)
 
     print("train_data shape:", train_data.shape)
     unique_train = np.unique(train_label)
