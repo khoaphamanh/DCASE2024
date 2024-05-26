@@ -1,10 +1,9 @@
-from transformers import Wav2Vec2Model, Wav2Vec2FeatureExtractor, Wav2Vec2ForCTC
+from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2ForCTC
 import numpy as np
 import torch
 import sys
 import os
 from torch import nn
-import random
 from torchvision.transforms.v2 import MixUp
 from sklearn.model_selection import train_test_split
 from sklearn.utils import class_weight
@@ -18,7 +17,7 @@ import utils
 
 
 class Wav2VecXLR300MCustom(nn.Module):
-    def __init__(self, fs, emb_size, output_size):
+    def __init__(self, fs, emb_size: int, output_size: int):
         super().__init__()
         self.pre_trained_wav2vec = Wav2Vec2ForCTC.from_pretrained(
             "facebook/wav2vec2-xls-r-300m"
@@ -46,14 +45,17 @@ class Wav2VecXLR300MCustom(nn.Module):
 
 
 class Wav2VecXLR300M:
-    def __init__(self, data_preprocessing: DataPreprocessing, seed):
+    def __init__(
+        self,
+        data_preprocessing: DataPreprocessing,
+        seed,
+    ):
 
         # data preprocessing
         self.data_preprocessing = data_preprocessing
 
         # time series information
         self.fs = data_preprocessing.fs
-        # self.num_classes_train = 67
 
         # model configuration parameter
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -73,7 +75,7 @@ class Wav2VecXLR300M:
 
         return X_train, y_train
 
-    def data_loader(self, batch_size, window_size=None, hop_size=None):
+    def data_loader(self, batch_size: int, window_size=None, hop_size=None):
         """
         Turn data to pytorch,split it to train val and turn it to dataloader
         """
@@ -106,21 +108,66 @@ class Wav2VecXLR300M:
 
         return None
 
-    def mix_up(self, alpha, num_classes):
+    def mix_up(self, alpha: float, num_classes: int):
         return MixUp(alpha=alpha, num_classes=num_classes)
 
-    def train_test_loop(self, emb_size, lr):
+    def train_test_loop(
+        self,
+        project: str,
+        api_token: str,
+        batch_size: int,
+        emb_size: int,
+        lr: float,
+        wd: int,
+        epochs: int,
+        window_size=None,
+        hop_size=None,
+    ):
         """
         Train test loop
         """
-        # split data
+        # init run
+        run = neptune.init_run(project=project, api_token=api_token)
+
+        # load dataloader
+        train_loader, val_loader = self.data_loader(
+            batch_size=batch_size, window_size=window_size, hop_size=hop_size
+        )
+
+        # save parameter in neptune
+        if window_size == None:
+            window_size = self.fs * 2
+        if hop_size == None:
+            hop_size = self.fs
+
+        hyperparameters = {
+            "batch_size": batch_size,
+            "emb_size": emb_size,
+            "lr": lr,
+            "loss": "cross_entropy",
+            "optimizer": "adam",
+            "window_size": window_size,
+            "hop_size": hop_size,
+            "weight_deca": wd,
+        }
+        run["hyperparameter"] = hyperparameters
+
         # init model
         model = Wav2VecXLR300MCustom(
             fs=self.fs, emb_size=emb_size, output_size=self.num_classes_train
         )
 
         # loss and optimizer
-        loss = 1
+        loss = nn.CrossEntropyLoss(weight=self.class_weights)
+        optimizer = torch.optim.AdamW(params=model.parameters(), lr=lr, weight_decay=wd)
+
+        # training loop:
+        for ep in epochs:
+            loss_train = 0
+            loss_val = 0
+
+        # check running time
+        # run["runing_time"] = run["sys/running_time"]
 
 
 if __name__ == "__main__":
