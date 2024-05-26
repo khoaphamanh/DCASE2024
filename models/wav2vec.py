@@ -18,28 +18,18 @@ import utils
 
 
 class Wav2VecXLR300MCustom(nn.Module):
-    def __init__(self, fs, emb_size: int, output_size: int):
+    def __init__(self, model_name: str, emb_size: int, output_size: int):
         super().__init__()
-        self.pre_trained_wav2vec = Wav2Vec2ForCTC.from_pretrained(
-            "facebook/wav2vec2-xls-r-300m"
-        )
-        self.processor = Wav2Vec2FeatureExtractor.from_pretrained(
-            "facebook/wav2vec2-xls-r-300m"
-        )
-
-        self.fs = fs
+        self.pre_trained_wav2vec = Wav2Vec2ForCTC.from_pretrained(model_name)
         self.out_layer = nn.Sequential(
             nn.Flatten(),
             nn.ReLU(),
             nn.Linear(in_features=3168, out_features=emb_size),
             nn.ReLU(),
-            nn.Linear(emb_size, output_size),
+            nn.Linear(in_features=emb_size, out_features=output_size),
         )
 
     def forward(self, x):
-        x = self.processor(x, return_tensors="pt", sampling_rate=self.fs).input_values[
-            0
-        ]
         x = self.pre_trained_wav2vec(x).logits
         x = self.out_layer(x)
         return x
@@ -72,7 +62,7 @@ class AnomalyDetection:
             window_size=window_size, hop_size=hop_size, train=True, test=False
         )
         # num classes, output size
-        self.num_classes_train = np.unique(y_train)
+        self.num_classes_train = len(np.unique(y_train))
 
         return X_train, y_train
 
@@ -91,13 +81,15 @@ class AnomalyDetection:
         len_val = len(X_val)
 
         # compute the class weights
-        self.class_weights = class_weight.compute_class_weight(
-            class_weight="balance", classes=np.unique(y_train), y=y_train
-        ).astype(float)
+        self.class_weights = torch.tensor(
+            class_weight.compute_class_weight(
+                class_weight="balanced", classes=np.unique(y_train), y=y_train
+            ).astype(float)
+        ).to(self.device)
 
         # dataloader
-        train_data = TensorDataset(torch.tensor(X_train, y_train))
-        val_data = TensorDataset(torch.tensor(X_val, y_val))
+        train_data = TensorDataset(torch.tensor(X_train), torch.tensor(y_train))
+        val_data = TensorDataset(torch.tensor(X_val), torch.tensor(y_val))
 
         train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
         val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=True)
@@ -118,6 +110,7 @@ class AnomalyDetection:
         self,
         project: str,
         api_token: str,
+        model_name: str,
         batch_size: int,
         emb_size: int,
         lr: float,
@@ -157,16 +150,25 @@ class AnomalyDetection:
 
         # init model
         model = Wav2VecXLR300MCustom(
-            fs=self.fs, emb_size=emb_size, output_size=self.num_classes_train
+            model_name=model_name,
+            emb_size=emb_size,
+            output_size=self.num_classes_train,
         )
         model = model.to(self.device)
+        processor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
+
+        # def check_model_device(model):
+        #     for name, param in model.named_parameters():
+        #         print(f"Parameter {name} is on device: {param.device}")
+
+        # check_model_device(model)
 
         # loss and optimizer
         loss = nn.CrossEntropyLoss(weight=self.class_weights)
         optimizer = torch.optim.AdamW(params=model.parameters(), lr=lr, weight_decay=wd)
 
         # training loop:
-        for ep in epochs:
+        for ep in range(epochs):
             loss_train = 0
             accuracy_train = 0
             f1_train = 0
@@ -186,12 +188,23 @@ class AnomalyDetection:
             # training mode
             model.train()
             for batch_train, (X_train, y_train) in enumerate(train_loader):
+
+                # preprocessing the input
+                X_train = processor(
+                    X_train, return_tensors="pt", sampling_rate=self.fs
+                ).input_values[0]
+                X_train = X_train.squeeze()
+
                 # to device
                 X_train = X_train.to(self.device)
                 y_train = y_train.to(self.device)
+                print("y_train:", y_train)
+                print("y_traind type:", y_train.dtype)
+                # print(X_train.device, y_train.device, self.class_weights.device)
 
                 # forward pass
                 y_pred_train_logit = model(X_train)
+                # print("debug checkpoint")
                 y_pred_train_label = y_pred_train_logit.argmax(dim=1)
 
                 # calculate the loss, accuracy, f1 score and confusion matrix
@@ -229,6 +242,13 @@ class AnomalyDetection:
             model.eval()
             with torch.inference_mode():
                 for batch_val, (X_val, y_val) in enumerate(val_loader):
+
+                    # preprocessing the input
+                    X_test = processor(
+                        X_test, return_tensors="pt", sampling_rate=self.fs
+                    ).input_values[0]
+                    X_test = X_test.squeeze()
+
                     # to device
                     X_val = X_val.to(self.device)
                     y_val = y_val.to(self.device)
@@ -330,6 +350,7 @@ if __name__ == "__main__":
     batch_size = utils.batch_size_w2v
     wd = utils.wd_w2v
     epochs = utils.epochs_w2v
+    model_name = utils.model_name_w2v
 
     project = utils.project
     api_token = utils.api_token
@@ -342,6 +363,7 @@ if __name__ == "__main__":
 
     # train model
     anomaly_detection.train_test_loop(
+        model_name=model_name,
         project=project,
         api_token=api_token,
         batch_size=batch_size,
@@ -363,6 +385,7 @@ if __name__ == "__main__":
     # # test = processor(test, return_tensors="pt", sampling_rate=fs).input_values
     # print("test shape:", test.shape)
     # # print("test:", test)
+    # fs = 16000
     # model = Wav2VecXLR300MCustom(fs=fs, emb_size=emb_size, output_size=67)
     # with torch.inference_mode():
     #     out = model(test)
