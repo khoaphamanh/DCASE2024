@@ -10,7 +10,7 @@
                                     #   Default-Partition gerechnet. Es können mehrere angegeben werden, mit Komma getrennt.
 #SBATCH --cpus-per-task=8          # Reservierung von 4 CPUs pro Rechenknoten
 #SBATCH --mem=64G                   # Reservierung von 10GB RAM
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:4 
 
 source /home/phamanh/anaconda3/bin/activate /home/phamanh/anaconda3/envs/dcase
 cd /home/phamanh/nobackup/DCASE2024/models
@@ -23,4 +23,4 @@ echo "GPUs: ${CUDA_VISIBLE_DEVICES}"
 echo "Python environment: $(conda info --envs | grep '*' | sed -e 's/^[ \t*]*//')"
 echo 
 
-python3 /home/phamanh/nobackup/DCASE2024/models/wav2vec.py
+python3 /home/phamanh/nobackup/DCASE2024/models/w2v.py
