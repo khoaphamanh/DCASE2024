@@ -9,6 +9,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import class_weight
 from torch.utils.data import DataLoader, TensorDataset
 import neptune
+from sklearn.metrics import f1_score, confusion_matrix, accuracy_score
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -44,7 +45,7 @@ class Wav2VecXLR300MCustom(nn.Module):
         return x
 
 
-class Wav2VecXLR300M:
+class AnomalyDetection:
     def __init__(
         self,
         data_preprocessing: DataPreprocessing,
@@ -86,11 +87,13 @@ class Wav2VecXLR300M:
         X_train, X_val, y_train, y_val = train_test_split(
             X, y, train_size=self.train_size, random_state=self.seed, stratify=y
         )
+        len_train = len(X_train)
+        len_val = len(X_val)
 
         # compute the class weights
         self.class_weights = class_weight.compute_class_weight(
-            class_weight="balance", classes=self.num_classes_train, y=y_train
-        )
+            class_weight="balance", classes=np.unique(y_train), y=y_train
+        ).astype(float)
 
         # dataloader
         train_data = TensorDataset(torch.tensor(X_train, y_train))
@@ -99,7 +102,7 @@ class Wav2VecXLR300M:
         train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
         val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=True)
 
-        return train_loader, val_loader
+        return train_loader, val_loader, len_train, len_val
 
     def speed_perturb(self, min_rate, max_rate, p):
         """
@@ -130,7 +133,7 @@ class Wav2VecXLR300M:
         run = neptune.init_run(project=project, api_token=api_token)
 
         # load dataloader
-        train_loader, val_loader = self.data_loader(
+        train_loader, val_loader, len_train, len_val = self.data_loader(
             batch_size=batch_size, window_size=window_size, hop_size=hop_size
         )
 
@@ -145,10 +148,10 @@ class Wav2VecXLR300M:
             "emb_size": emb_size,
             "lr": lr,
             "loss": "cross_entropy",
-            "optimizer": "adam",
+            "optimizer": "adamw",
             "window_size": window_size,
             "hop_size": hop_size,
-            "weight_deca": wd,
+            "weight_decay": wd,
         }
         run["hyperparameter"] = hyperparameters
 
@@ -156,6 +159,7 @@ class Wav2VecXLR300M:
         model = Wav2VecXLR300MCustom(
             fs=self.fs, emb_size=emb_size, output_size=self.num_classes_train
         )
+        model = model.to(self.device)
 
         # loss and optimizer
         loss = nn.CrossEntropyLoss(weight=self.class_weights)
@@ -164,10 +168,154 @@ class Wav2VecXLR300M:
         # training loop:
         for ep in epochs:
             loss_train = 0
-            loss_val = 0
+            accuracy_train = 0
+            f1_train = 0
 
-        # check running time
-        # run["runing_time"] = run["sys/running_time"]
+            loss_val = 0
+            accuracy_val = 0
+            f1_val = 0
+
+            # confustion matrix
+            if ep == epochs - 1:
+                y_train_cm = torch.empty(size=(1, len_train))
+                y_pred_train_cm = torch.empty(size=(1, len_train))
+
+                y_val_cm = torch.empty(size=(1, len_val))
+                y_pred_val_cm = torch.empty(size=(1, len_val))
+
+            # training mode
+            model.train()
+            for batch_train, (X_train, y_train) in enumerate(train_loader):
+                # to device
+                X_train = X_train.to(self.device)
+                y_train = y_train.to(self.device)
+
+                # forward pass
+                y_pred_train_logit = model(X_train)
+                y_pred_train_label = y_pred_train_logit.argmax(dim=1)
+
+                # calculate the loss, accuracy, f1 score and confusion matrix
+                loss_train_this_batch = loss(y_pred_train_logit, y_train)
+                loss_train = loss_train + loss_train_this_batch
+
+                accuracy_train_this_batch = accuracy_score(
+                    y_pred=y_pred_train_label.numpy(), y_true=y_train.numpy()
+                )
+                accuracy_train = accuracy_train + accuracy_train_this_batch
+
+                f1_train_this_batch = f1_score(
+                    y_pred=y_pred_train_label.numpy(),
+                    y_true=y_train.numpy(),
+                    average="weighted",
+                )
+                f1_train = f1_train + f1_train_this_batch
+
+                if ep == epochs - 1:
+                    y_train_cm[
+                        batch_train * batch_size : batch_train * batch_size + batch_size
+                    ] = y_train
+                    y_pred_train_cm[
+                        batch_train * batch_size : batch_train * batch_size + batch_size
+                    ] = y_pred_train_label
+
+                # gradient decent, backpropagation and update parameters
+                optimizer.zero_grad()
+                loss_train_this_batch.backward()
+                optimizer.step()
+
+                # calculate confusion metrics for last epoch
+
+            # evaluation mode
+            model.eval()
+            with torch.inference_mode():
+                for batch_val, (X_val, y_val) in enumerate(val_loader):
+                    # to device
+                    X_val = X_val.to(self.device)
+                    y_val = y_val.to(self.device)
+
+                    # forward pass
+                    y_pred_val_logit = model(X_val)
+                    y_pred_val_label = y_pred_val_logit.argmax(dim=1)
+
+                    # calculate loss, accuracy and f1 score
+                    loss_val_this_batcht = loss(y_pred_val_logit, y_val)
+                    loss_val = loss_val + loss_val_this_batcht
+
+                    accuracy_val_this_batch = accuracy_score(
+                        y_pred=y_pred_val_label.numpy(), y_true=y_val.numpy()
+                    )
+                    accuracy_val = accuracy_val + accuracy_val_this_batch
+
+                    f1_val_this_batch = f1_score(
+                        y_pred=y_pred_val_label.numpy(),
+                        y_true=y_val.numpy(),
+                        average="weighted",
+                    )
+                    f1_val = f1_val + f1_val_this_batch
+
+                    if ep == epochs - 1:
+                        y_val_cm[
+                            batch_val * batch_size : batch_val * batch_size + batch_size
+                        ] = y_val
+                        y_pred_val_cm[
+                            batch_val * batch_size : batch_val * batch_size + batch_size
+                        ] = y_pred_val_label
+
+            # print out the metrics
+            loss_train = loss_train / len(train_loader)
+            accuracy_train = accuracy_train / len(train_loader)
+            f1_train = f1_train / len(train_loader)
+
+            loss_val = loss_val / len(val_loader)
+            accuracy_val = accuracy_val / len(val_loader)
+            f1_val = f1_val / len(val_loader)
+
+            if ep == epochs - 1:
+                cm_train = confusion_matrix(
+                    y_true=y_train_cm.numpy(), y_pred=y_pred_train_cm.numpy()
+                )
+                cm_val = confusion_matrix(
+                    y_true=y_val_cm.numpy(), y_pred=y_pred_val_cm.numpy()
+                )
+
+            print("epoch {}".format(ep))
+            print(
+                "loss train = {:.4f}, accuracy train = {:.4f}, f1 train ={:.4f}".format(
+                    loss_train, accuracy_train, f1_train
+                )
+            )
+            if ep == epochs - 1:
+                print("confusion matrix train")
+                print(cm_train)
+            print(
+                "loss val = {:.4f}, accuracy val = {:.4f},  f1 val = {:.4f}".format(
+                    loss_val, accuracy_val, f1_val
+                )
+            )
+            if ep == epochs - 1:
+                print("confusion matrix val")
+                print(cm_val)
+            print()
+
+            # log the metrics in neptune
+            metrics = {
+                "loss_train": loss_train,
+                "accuracy_train": accuracy_train,
+                "f1_train": f1_train,
+                "loss_val": loss_val,
+                "accuracy_val": accuracy_val,
+                "f1_val": f1_val,
+            }
+            run["metrics"].append(metrics, step=ep)
+            if ep == epochs - 1:
+                run["metrics/confusion_matrix"].append(cm_train)
+                run["metrics/confusion_matrix"].append(cm_val)
+
+        # running time
+        run["runing_time"] = run["sys/running_time"]
+
+        # end log neptune
+        run.stop()
 
 
 if __name__ == "__main__":
@@ -179,19 +327,34 @@ if __name__ == "__main__":
     # hyperparameters
     lr = utils.lr_w2v
     emb_size = utils.emb_w2v
+    batch_size = utils.batch_size_w2v
+    wd = utils.wd_w2v
+    epochs = utils.epochs_w2v
 
+    project = utils.project
+    api_token = utils.api_token
+
+    # data preprocessing
     data_preprocessing = DataPreprocessing(raw_data_path=raw_data_path)
-    w2v = Wav2VecXLR300M(data_preprocessing=data_preprocessing, seed=seed)
-    fs = w2v.fs
-    print("fs:", fs)
+    anomaly_detection = AnomalyDetection(
+        data_preprocessing=data_preprocessing, seed=seed
+    )
 
-    train_data, train_label = w2v.load_train_data()
-    print("train_data shape:", train_data.shape)
+    # train model
+    anomaly_detection.train_test_loop(
+        project=project,
+        api_token=api_token,
+        batch_size=batch_size,
+        emb_size=emb_size,
+        lr=lr,
+        wd=wd,
+        epochs=epochs,
+    )
+    # train_data, train_label = anomaly_detection.load_train_data()
+    # print("train_data shape:", train_data.shape)
 
-    unique = w2v.num_classes_train
-    print("unique:", unique)
-    coumt = w2v.count
-    print("coumt:", coumt)
+    # unique = anomaly_detection.num_classes_train
+    # print("unique:", unique)
     # processor = Wav2Vec2FeatureExtractor.from_pretrained("facebook/wav2vec2-xls-r-300m")
 
     # test = train_data[0:5]
