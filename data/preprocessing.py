@@ -1,6 +1,7 @@
 import os
 import numpy as np
 from scipy.io import wavfile
+import pandas as pd
 
 # Get the absolute path of the current file
 file_path = os.path.abspath(__file__)
@@ -68,8 +69,7 @@ class DataPreprocessing:
                     ]
 
                     # get the unique labels
-                    if self.machines[i] in self.no_attribute_machine:
-                        name_file.insert(0, self.machines[i])
+                    name_file.insert(0, self.machines[i])
                     name_file = "_".join(name_file)
 
                     if name_file not in unique_labels:
@@ -91,6 +91,14 @@ class DataPreprocessing:
         train_label = [label_to_num[label] for label in train_label]
         test_label = [label_to_num[label] for label in test_label]
 
+        # save label_to_num as csv
+        num_to_label = {str(num): label for (label, num) in label_to_num.items()}
+        num_to_label = pd.DataFrame(
+            list(num_to_label.items()), columns=["Number", "Label"]
+        )
+        num_to_label_path = os.path.join(self.data_path, "num_to_label.csv")
+        num_to_label.to_csv(num_to_label_path, index=False)
+
         return train_data, train_label, test_data, test_label
 
     def create_data(self, window_size=None, hop_size=None):
@@ -99,7 +107,7 @@ class DataPreprocessing:
         """
         # default window_size and hop_size if not given
         if window_size is None:
-            window_size = self.fs*2
+            window_size = self.fs * 2
         if hop_size is None:
             hop_size = self.fs
 
@@ -139,7 +147,7 @@ class DataPreprocessing:
         """
         # default window_size and hop_size if not given
         if window_size is None:
-            window_size = self.fs*2
+            window_size = self.fs * 2
         if hop_size is None:
             hop_size = self.fs
 
