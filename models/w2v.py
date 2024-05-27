@@ -100,8 +100,14 @@ class AnomalyDetection:
             torch.tensor(X_val).float(), torch.tensor(y_val).long()
         )
 
-        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=True)
+        num_workers = self.n_gpus * 4
+
+        train_loader = DataLoader(
+            train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers
+        )
+        val_loader = DataLoader(
+            val_data, batch_size=batch_size, shuffle=True, num_workers=num_workers
+        )
 
         return train_loader, val_loader, len_train, len_val
 
@@ -163,23 +169,17 @@ class AnomalyDetection:
             emb_size=emb_size,
             output_size=self.num_classes_train,
         )
-        print("n_gpus", self.n_gpus)
+
         # if multiple gpus
-        # if self.n_gpus > 1:
+        if self.n_gpus > 1:
+            model = nn.DataParallel(model, device_ids=list(range(self.n_gpus)), dim=0)
+        model = model.to(self.device)
 
-        #     model = nn.DataParallel(model)
-
-        # model = model.to(self.device)
+        # processor for preprocessing
         processor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
 
-        # def check_model_device(model):
-        #     for name, param in model.named_parameters():
-        #         print(f"Parameter {name} is on device: {param.device}")
-
-        # check_model_device(model)
-
         # loss and optimizer
-        loss = nn.CrossEntropyLoss()  # weight=self.class_weights
+        loss = nn.CrossEntropyLoss(weight=self.class_weights)  #
         optimizer = torch.optim.AdamW(params=model.parameters(), lr=lr, weight_decay=wd)
 
         # training loop:
@@ -209,24 +209,16 @@ class AnomalyDetection:
                 X_train = processor(
                     X_train, return_tensors="pt", sampling_rate=self.fs
                 ).input_values[0]
-                # print("X_train shape:", X_train.shape)
+
                 if batch_size > 1:
                     X_train = X_train.squeeze()
-                # print("X_train121212 shape:", X_train.shape)
 
                 # to device
-                if self.n_gpus > 1:
-                    model = nn.DataParallel(model)
-                model = model.to(self.device)
                 X_train = X_train.to(self.device)
                 y_train = y_train.to(self.device)
-                # print("y_train:", y_train)
-                # print("y_traind type:", y_train.dtype)
-                # print(X_train.device, y_train.device, self.class_weights.device)
 
                 # forward pass
                 y_pred_train_logit = model(X_train)
-                # print("debug checkpoint")
                 y_pred_train_label = y_pred_train_logit.argmax(dim=1)
 
                 # calculate the loss, accuracy, f1 score and confusion matrix
@@ -259,35 +251,6 @@ class AnomalyDetection:
                 loss_train_this_batch.backward()
                 optimizer.step()
 
-                # Optionally: Delete training batch variables to free up GPU memory
-                model = model.cpu()
-                (
-                    X_train,
-                    y_train,
-                    y_pred_train_logit,
-                    y_pred_train_label,
-                    # loss_train,
-                    loss_train_this_batch,
-                ) = (
-                    X_train.cpu(),
-                    y_train.cpu(),
-                    y_pred_train_logit.cpu(),
-                    y_pred_train_label.cpu(),
-                    # loss_train.cpu(),
-                    loss_train_this_batch.cpu(),
-                )
-                del (
-                    X_train,
-                    y_train,
-                    y_pred_train_logit,
-                    y_pred_train_label,
-                    loss_train_this_batch,
-                )
-                torch.cuda.empty_cache()
-
-                if batch_train == 500:
-                    break
-
             # evaluation mode
             model.eval()
             with torch.inference_mode():
@@ -301,9 +264,6 @@ class AnomalyDetection:
                         X_val = X_val.squeeze()
 
                     # to device
-                    if self.n_gpus > 1:
-                        model = nn.DataParallel(model)
-                    model = model.to(self.device)
                     X_val = X_val.to(self.device)
                     y_val = y_val.to(self.device)
 
@@ -335,32 +295,6 @@ class AnomalyDetection:
                         y_pred_val_cm[
                             batch_val * batch_size : batch_val * batch_size + batch_size
                         ] = y_pred_val_label
-
-                    # Optionally: Delete validation batch variables to free up GPU memory
-                    model = model.cpu()
-                    (
-                        X_val,
-                        y_val,
-                        y_pred_val_logit,
-                        y_pred_val_label,
-                        # loss_val,
-                        loss_val_this_batch,
-                    ) = (
-                        X_val.cpu(),
-                        y_val.cpu(),
-                        y_pred_val_logit.cpu(),
-                        y_pred_val_label.cpu(),
-                        # loss_val.cpu(),
-                        loss_val_this_batch.cpu(),
-                    )
-                    del (
-                        X_val,
-                        y_val,
-                        y_pred_val_logit,
-                        y_pred_val_label,
-                        loss_val_this_batch,
-                    )
-                    torch.cuda.empty_cache()
 
             # print out the metrics
             loss_train = loss_train / len(train_loader)
