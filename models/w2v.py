@@ -165,11 +165,11 @@ class AnomalyDetection:
         )
         print("n_gpus", self.n_gpus)
         # if multiple gpus
-        if self.n_gpus > 1:
+        # if self.n_gpus > 1:
 
-            model = nn.DataParallel(model)
+        #     model = nn.DataParallel(model)
 
-        model = model.to(self.device)
+        # model = model.to(self.device)
         processor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
 
         # def check_model_device(model):
@@ -179,7 +179,7 @@ class AnomalyDetection:
         # check_model_device(model)
 
         # loss and optimizer
-        loss = nn.CrossEntropyLoss(weight=self.class_weights)
+        loss = nn.CrossEntropyLoss()  # weight=self.class_weights
         optimizer = torch.optim.AdamW(params=model.parameters(), lr=lr, weight_decay=wd)
 
         # training loop:
@@ -215,6 +215,9 @@ class AnomalyDetection:
                 # print("X_train121212 shape:", X_train.shape)
 
                 # to device
+                if self.n_gpus > 1:
+                    model = nn.DataParallel(model)
+                model = model.to(self.device)
                 X_train = X_train.to(self.device)
                 y_train = y_train.to(self.device)
                 # print("y_train:", y_train)
@@ -228,7 +231,7 @@ class AnomalyDetection:
 
                 # calculate the loss, accuracy, f1 score and confusion matrix
                 loss_train_this_batch = loss(y_pred_train_logit, y_train)
-                loss_train = loss_train + loss_train_this_batch
+                loss_train = loss_train + loss_train_this_batch.item()
 
                 accuracy_train_this_batch = accuracy_score(
                     y_pred=y_pred_train_label.cpu().numpy(),
@@ -257,8 +260,33 @@ class AnomalyDetection:
                 optimizer.step()
 
                 # Optionally: Delete training batch variables to free up GPU memory
-                del X_train, y_train, y_pred_train_logit, y_pred_train_label
+                model = model.cpu()
+                (
+                    X_train,
+                    y_train,
+                    y_pred_train_logit,
+                    y_pred_train_label,
+                    # loss_train,
+                    loss_train_this_batch,
+                ) = (
+                    X_train.cpu(),
+                    y_train.cpu(),
+                    y_pred_train_logit.cpu(),
+                    y_pred_train_label.cpu(),
+                    # loss_train.cpu(),
+                    loss_train_this_batch.cpu(),
+                )
+                del (
+                    X_train,
+                    y_train,
+                    y_pred_train_logit,
+                    y_pred_train_label,
+                    loss_train_this_batch,
+                )
                 torch.cuda.empty_cache()
+
+                if batch_train == 500:
+                    break
 
             # evaluation mode
             model.eval()
@@ -266,13 +294,16 @@ class AnomalyDetection:
                 for batch_val, (X_val, y_val) in enumerate(val_loader):
                     print("batch_val", batch_val)
                     # preprocessing the input
-                    X_test = processor(
-                        X_test, return_tensors="pt", sampling_rate=self.fs
+                    X_val = processor(
+                        X_val, return_tensors="pt", sampling_rate=self.fs
                     ).input_values[0]
                     if batch_size > 1:
                         X_val = X_val.squeeze()
 
                     # to device
+                    if self.n_gpus > 1:
+                        model = nn.DataParallel(model)
+                    model = model.to(self.device)
                     X_val = X_val.to(self.device)
                     y_val = y_val.to(self.device)
 
@@ -281,8 +312,8 @@ class AnomalyDetection:
                     y_pred_val_label = y_pred_val_logit.argmax(dim=1)
 
                     # calculate loss, accuracy and f1 score
-                    loss_val_this_batcht = loss(y_pred_val_logit, y_val)
-                    loss_val = loss_val + loss_val_this_batcht
+                    loss_val_this_batch = loss(y_pred_val_logit, y_val)
+                    loss_val = loss_val + loss_val_this_batch.item()
 
                     accuracy_val_this_batch = accuracy_score(
                         y_pred=y_pred_val_label.cpu().numpy(),
@@ -306,7 +337,29 @@ class AnomalyDetection:
                         ] = y_pred_val_label
 
                     # Optionally: Delete validation batch variables to free up GPU memory
-                    del X_val, y_val, y_pred_val_logit, y_pred_val_label
+                    model = model.cpu()
+                    (
+                        X_val,
+                        y_val,
+                        y_pred_val_logit,
+                        y_pred_val_label,
+                        # loss_val,
+                        loss_val_this_batch,
+                    ) = (
+                        X_val.cpu(),
+                        y_val.cpu(),
+                        y_pred_val_logit.cpu(),
+                        y_pred_val_label.cpu(),
+                        # loss_val.cpu(),
+                        loss_val_this_batch.cpu(),
+                    )
+                    del (
+                        X_val,
+                        y_val,
+                        y_pred_val_logit,
+                        y_pred_val_label,
+                        loss_val_this_batch,
+                    )
                     torch.cuda.empty_cache()
 
             # print out the metrics
