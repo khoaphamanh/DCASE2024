@@ -14,6 +14,7 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import seaborn as sns
 import torch.nn.functional as F
+from neptune.utils import stringify_unsupported
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -53,14 +54,14 @@ class Wav2VecXLR300MCustom(nn.Module):
 class ArcFaceLoss(nn.Module):
     def __init__(self, num_classes, emb_size, margin, scale, class_weights=None):
         super().__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_classes = num_classes
         self.emb_size = emb_size
         self.margin = margin
         self.scale = scale
         self.w = nn.Parameter(
             data=torch.randn(size=(num_classes, emb_size)), requires_grad=True
-        )
-
+        ).to(self.device)
         self.class_weights = class_weights
 
     def forward(self, embedding, y_true):
@@ -101,7 +102,7 @@ class ArcFaceLoss(nn.Module):
 
     def onehot_true_label(self, y_true):
         batch_size = y_true.shape[0]
-        onehot = torch.zeros(batch_size, self.num_classes)
+        onehot = torch.zeros(batch_size, self.num_classes).to(self.device)
         onehot.scatter_(1, y_true.unsqueeze(-1), 1)
         return onehot
 
@@ -301,7 +302,7 @@ class AnomalyDetection:
             "num_workers": self.num_workers,
         }
 
-        run["configurations"] = configurations
+        run["configurations"] = stringify_unsupported(configurations)
         run["hyperparameters"] = hyperparameters
 
         # init model
@@ -329,7 +330,6 @@ class AnomalyDetection:
                 scale=scale,
                 margin=margin,
             )
-            loss = loss.to(self.device)
 
         # optimizer
         parameters = (
