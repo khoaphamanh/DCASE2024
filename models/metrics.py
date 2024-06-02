@@ -71,18 +71,18 @@ class ArcFaceLoss(nn.Module):
 class AdaCosLoss(nn.Module):
     def __init__(self, num_classes, emb_size, class_weights=None):
         super().__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_classes = num_classes
         self.emb_size = emb_size
         self.w = nn.Parameter(
             data=torch.randn(size=(num_classes, emb_size)), requires_grad=True
-        )
-        # self.scale = torch.sqrt(torch.tensor(2.0)) * torch.log(torch.tensor(num_classes-1))
+        ).to(self.device)
         self.class_weights = class_weights
+        self.scale = torch.sqrt(torch.tensor(2.0)) * torch.log(
+            torch.tensor(num_classes - 1)
+        )
 
     def forward(self, embedding, y_true):
-        self.scale = torch.sqrt(torch.tensor(2.0)) * torch.log(
-            torch.tensor(self.num_classes - 1)
-        )
 
         # logits
         cosine_logits = self.logits(embedding)  # size (B, n_classes)
@@ -95,27 +95,26 @@ class AdaCosLoss(nn.Module):
 
         # new scale
         if self.training:
-            # B_avg
-            batch_size = y_true.shape[0]
-            B_avg = torch.where(
-                onehot < 1,
-                torch.exp(self.scale * cosine_logits),
-                torch.zeros_like(cosine_logits),
-            )  # size (B, n_classes)
-            B_avg = torch.sum(B_avg) / batch_size  # size (1,)
+            with torch.no_grad():
+                # B_avg
+                batch_size = y_true.shape[0]
+                B_avg = torch.where(
+                    onehot < 1,
+                    torch.exp(self.scale * cosine_logits),
+                    torch.zeros_like(cosine_logits),
+                )  # size (B, n_classes)
+                B_avg = torch.sum(B_avg) / batch_size  # size (1,)
 
-            # medium of the angles of true labels
-            angle_median = torch.median(angle[onehot == 1])  # size (1,)
+                # medium of the angles of true labels
+                angle_median = torch.median(angle[onehot == 1])  # size (1,)
 
-            # update scale
-            self.scale = (
-                torch.log(B_avg)
-                / torch.cos(
+                # update scale
+                self.scale = torch.log(B_avg) / torch.cos(
                     torch.min(
-                        torch.pi / 10 * torch.ones_like(angle_median), angle_median
+                        torch.pi / 10 * torch.ones_like(angle_median),
+                        angle_median,
                     )
                 )
-            ).detach()
 
         # calculate new logits
         logits = self.scale * cosine_logits
@@ -148,6 +147,6 @@ class AdaCosLoss(nn.Module):
                   [0,1,0,0,0,0,0,0,0,0]]
         """
         batch_size = y_true.shape[0]
-        onehot = torch.zeros(batch_size, self.num_classes)
+        onehot = torch.zeros(batch_size, self.num_classes).to(self.device)
         onehot.scatter_(1, y_true.unsqueeze(-1), 1)
         return onehot

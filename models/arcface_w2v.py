@@ -13,13 +13,13 @@ from sklearn.metrics import f1_score, confusion_matrix, accuracy_score
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import seaborn as sns
-import torch.nn.functional as F
 from neptune.utils import stringify_unsupported
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from data.preprocessing import DataPreprocessing, raw_data_path
 import utils
+from metrics import AdaCosLoss, ArcFaceLoss
 
 
 # fine-tune model wav2vec
@@ -48,70 +48,6 @@ class Wav2VecXLR300MCustom(nn.Module):
         x = self.pre_trained_wav2vec(x).logits
         x = self.out_layer(x)
         return x
-
-
-# Arcface Loss
-class ArcFaceLoss(nn.Module):
-    def __init__(self, num_classes, emb_size, margin, scale, class_weights=None):
-        super().__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.num_classes = num_classes
-        self.emb_size = emb_size
-        self.margin = margin
-        self.scale = scale
-        self.w = nn.Parameter(
-            data=torch.randn(size=(num_classes, emb_size)), requires_grad=True
-        ).to(self.device)
-        self.class_weights = class_weights
-
-    def forward(self, embedding, y_true):
-
-        # calculate logits
-        logits = self.logits(embedding=embedding, y_true=y_true)
-
-        # combine with cross entropy loss
-        ce = nn.CrossEntropyLoss(weight=self.class_weights)
-        loss = ce(logits, y_true)
-
-        return loss
-
-    def logits(self, embedding, y_true):
-
-        # cos(phi) =  (x @ w.t) / (||w.t||.||x|| ) = normalize(x) @ normalize(w.t) / 1 beacause (||normalize(w.T)|| = ||normalize(x)|| )
-        cosine_logits = F.linear(
-            input=F.normalize(embedding), weight=F.normalize(self.w)
-        )
-
-        # onehot vector based on y_true
-        onehot = self.onehot_true_label(y_true)  # size (B, num_classes)
-
-        # cosine logit of the target class index
-        cosine_target = cosine_logits[onehot == 1]  # size (B,)
-
-        # calculate cosine phi in target class index with phi = angle + m
-        cosine_phi = self.cosine_angle_plus_margin(
-            cosine_target=cosine_target
-        )  # size (B,)
-
-        # calculate logit new
-        diff = (cosine_phi - cosine_target).unsqueeze(1)
-        logits = cosine_logits + (onehot * diff)  # size (B,num_classes)
-        logits = self.scale * logits
-
-        return logits
-
-    def onehot_true_label(self, y_true):
-        batch_size = y_true.shape[0]
-        onehot = torch.zeros(batch_size, self.num_classes).to(self.device)
-        onehot.scatter_(1, y_true.unsqueeze(-1), 1)
-        return onehot
-
-    def cosine_angle_plus_margin(self, cosine_target):
-        eps = 1e-7
-        angle = torch.acos(torch.clamp(cosine_target, -1 + eps, 1 - eps))
-        phi = angle + self.margin
-        cosine_phi = torch.cos(phi)
-        return cosine_phi
 
 
 # main class anomaly detection
@@ -290,10 +226,11 @@ class AnomalyDetection:
             "optimizer_name": optimizer_name,
             "model_nane": model_name,
         }
-        if loss_name == "arcface":
+        if loss_name == "arcface" or loss_name == "adacos":
             hyperparameters["classifier_head"] = classifier_head
-            hyperparameters["scale"] = scale
-            hyperparameters["margin"] = margin
+            if loss_name == "arcface":
+                hyperparameters["scale"] = scale
+                hyperparameters["margin"] = margin
 
         configurations = {
             "seed": self.seed,
@@ -329,6 +266,13 @@ class AnomalyDetection:
                 class_weights=self.class_weights,
                 scale=scale,
                 margin=margin,
+            )
+
+        elif loss_name == "adacos":
+            loss = AdaCosLoss(
+                num_classes=self.num_classes_train,
+                emb_size=emb_size,
+                class_weights=self.class_weights,
             )
 
         # optimizer
@@ -373,7 +317,7 @@ class AnomalyDetection:
                 y_train = y_train.to(self.device)
 
                 # forward pass
-                if loss_name == "arcface":
+                if loss_name in ["arcface", "adacos"]:
                     embedding_train = model(X_train)
                     y_pred_train_logit = loss.logits(
                         embedding=embedding_train, y_true=y_train
@@ -385,7 +329,7 @@ class AnomalyDetection:
                 y_pred_train_label = y_pred_train_logit.argmax(dim=1)
 
                 # calculate the loss, accuracy, f1 score and confusion matrix
-                if loss_name == "arcface":
+                if loss_name in ["arcface", "adacos"]:
                     loss_train_this_batch = loss(embedding_train, y_train)
 
                 elif loss_name == "cross_entropy":
@@ -427,7 +371,7 @@ class AnomalyDetection:
                     y_val = y_val.to(self.device)
 
                     # forward pass
-                    if loss_name == "arcface":
+                    if loss_name in ["arcface", "adacos"]:
                         embedding_val = model(X_val)
                         y_pred_val_logit = loss.logits(
                             embedding=embedding_val, y_true=y_val
@@ -438,7 +382,7 @@ class AnomalyDetection:
                     y_pred_val_label = y_pred_val_logit.argmax(dim=1)
 
                     # calculate loss, accuracy, f1 score and confusion matrix
-                    if loss_name == "arcface":
+                    if loss_name in ["arcface", "adacos"]:
                         loss_val_this_batch = loss(embedding_val, y_val)
                     elif loss_name == "cross_entropy":
                         loss_val_this_batch = loss(y_pred_val_logit, y_val)
