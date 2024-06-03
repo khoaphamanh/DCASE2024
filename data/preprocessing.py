@@ -154,10 +154,10 @@ class DataPreprocessing:
             hop_size = self.fs
 
         # check if data available:
-        name_train_data = "train_data_{}_{}_test.npy".format(window_size, hop_size)
-        name_train_label = "train_label_{}_{}_test.npy".format(window_size, hop_size)
-        name_test_data = "test_data_{}_{}_test.npy".format(window_size, hop_size)
-        name_test_label = "test_label_{}_{}_test.npy".format(window_size, hop_size)
+        name_train_data = "train_data_{}_{}.npy".format(window_size, hop_size)
+        name_train_label = "train_label_{}_{}.npy".format(window_size, hop_size)
+        name_test_data = "test_data_{}_{}.npy".format(window_size, hop_size)
+        name_test_label = "test_label_{}_{}.npy".format(window_size, hop_size)
 
         name = [name_train_data, name_train_label, name_test_data, name_test_label]
         path_data_files = [os.path.join(self.data_path, i) for i in name]
