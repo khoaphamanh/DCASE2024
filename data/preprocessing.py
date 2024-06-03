@@ -65,7 +65,9 @@ class DataPreprocessing:
                     name_file = name.replace(".wav", "").split("_")
 
                     name_file = [
-                        n for idx, n in enumerate(name_file) if idx not in [0, 1, 3, 5]
+                        n
+                        for idx, n in enumerate(name_file)
+                        if idx not in [0, 1, 3, 4, 5]
                     ]
 
                     # get the unique labels
@@ -152,10 +154,10 @@ class DataPreprocessing:
             hop_size = self.fs
 
         # check if data available:
-        name_train_data = "train_data_{}_{}.npy".format(window_size, hop_size)
-        name_train_label = "train_label_{}_{}.npy".format(window_size, hop_size)
-        name_test_data = "test_data_{}_{}.npy".format(window_size, hop_size)
-        name_test_label = "test_label_{}_{}.npy".format(window_size, hop_size)
+        name_train_data = "train_data_{}_{}_test.npy".format(window_size, hop_size)
+        name_train_label = "train_label_{}_{}_test.npy".format(window_size, hop_size)
+        name_test_data = "test_data_{}_{}_test.npy".format(window_size, hop_size)
+        name_test_label = "test_label_{}_{}_test.npy".format(window_size, hop_size)
 
         name = [name_train_data, name_train_label, name_test_data, name_test_label]
         path_data_files = [os.path.join(self.data_path, i) for i in name]
@@ -192,6 +194,10 @@ class DataPreprocessing:
 
 if __name__ == "__main__":
 
+    from timeit import default_timer
+
+    start = default_timer()
+
     data_preprocessing = DataPreprocessing(raw_data_path=raw_data_path)
 
     # data_path = data_preprocessing.data_path
@@ -211,7 +217,9 @@ if __name__ == "__main__":
     # print("load_data:", load_data)
     # label_to_num = data_preprocessing.read_data()
     fs = 16000
-    train_data, train_label, test_data, test_label = data_preprocessing.load_data()
+    train_data, train_label, test_data, test_label = data_preprocessing.load_data(
+        window_size=8000, hop_size=8000
+    )
     print("train_label:", train_label)
 
     print("train_data shape:", train_data.shape)
@@ -227,3 +235,7 @@ if __name__ == "__main__":
     print(train_data[1])
     print(train_label[0])
     print(train_label[1])
+
+    end = default_timer()
+
+    print("run time", end - start)
