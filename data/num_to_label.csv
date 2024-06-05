@@ -66,9 +66,5 @@ Number,Label
 64,valve_source_v1pat_none_v2pat_B
 65,valve_target_v1pat_A_v2pat_B
 66,valve_target_v1pat_B_v2pat_B
-67,bearing_target_pro_A_vel_12_loc_E
-68,bearing_target_pro_A_vel_12_loc_G
-69,bearing_target_pro_A_vel_4_loc_H
-70,bearing_target_pro_B_vel_8_loc_E
-71,bearing_target_pro_B_vel_16_loc_F
-72,bearing_target_pro_B_vel_8_loc_G
+0,normal
+1,anomaly
