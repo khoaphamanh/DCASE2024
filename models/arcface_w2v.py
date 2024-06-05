@@ -4,7 +4,6 @@ import torch
 import sys
 import os
 from torch import nn
-from torchvision.transforms.v2 import MixUp
 from sklearn.model_selection import train_test_split
 from sklearn.utils import class_weight
 from torch.utils.data import DataLoader, TensorDataset
@@ -137,15 +136,11 @@ class AnomalyDetection:
         len_val = len(X_val)
 
         # compute the class weights
-        self.class_weights = (
-            torch.tensor(
-                class_weight.compute_class_weight(
-                    class_weight="balanced", classes=np.unique(y_train), y=y_train
-                )
+        self.class_weights = torch.tensor(
+            class_weight.compute_class_weight(
+                class_weight="balanced", classes=np.unique(y_train), y=y_train
             )
-            .float()
-            .to(self.device)
-        )
+        ).float()
 
         # dataloader
         train_data = TensorDataset(
@@ -179,16 +174,6 @@ class AnomalyDetection:
         plt.ylabel("True Labels", fontsize=15)
 
         return fig
-
-    def speed_perturb(self, min_rate, max_rate, p):
-        """
-        Speed perturb for stretch of compress audio signal
-        """
-
-        return None
-
-    def mix_up(self, alpha: float, num_classes: int):
-        return MixUp(alpha=alpha, num_classes=num_classes)
 
     def train_test_loop(
         self,
@@ -236,7 +221,7 @@ class AnomalyDetection:
             "optimizer_name": optimizer_name,
             "model_nane": model_name,
         }
-        if loss_name == "arcface" or loss_name == "adacos":
+        if loss_name in ["arcface", "adacos"]:
             hyperparameters["classifier_head"] = classifier_head
             if loss_name == "arcface":
                 hyperparameters["scale"] = scale
@@ -268,6 +253,7 @@ class AnomalyDetection:
 
         # loss
         if loss_name == "cross_entropy":
+            self.class_weights = self.class_weights.to(self.device)
             loss = nn.CrossEntropyLoss(weight=self.class_weights)
 
         elif loss_name == "arcface":
@@ -289,7 +275,7 @@ class AnomalyDetection:
         # optimizer
         parameters = (
             list(model.parameters()) + list(loss.parameters())
-            if loss_name == "arcface"
+            if loss_name in ["arcface", "adacos"]
             else model.parameters()
         )
 
@@ -443,17 +429,6 @@ class AnomalyDetection:
                 )
             )
 
-            print("confusion matrix train")
-            print(cm_train)
-            print(
-                "loss val = {:.4f}, accuracy val = {:.4f},  f1 val = {:.4f}".format(
-                    loss_val, accuracy_val, f1_val
-                )
-            )
-            print("confusion matrix val")
-            print(cm_val)
-            print()
-
             # log the metrics in neptune
             metrics = {
                 "loss_train": loss_train,
@@ -467,7 +442,9 @@ class AnomalyDetection:
             run["metrics"].append(metrics, step=ep)
 
             cm_train_fig = self.plot_confusion_matrix(cm=cm_train, name="train")
+            plt.close()
             cm_val_fig = self.plot_confusion_matrix(cm=cm_val, name="val")
+            plt.close()
             run["metrics/confusion_matrix_train"].append(cm_train_fig, step=ep)
             run["metrics/confusion_matrix_val"].append(cm_val_fig, step=ep)
 
@@ -509,11 +486,13 @@ if __name__ == "__main__":
     window_size = utils.window_size_np
     hop_size = utils.hop_size_np
 
+    # general hyperparameters
     project = utils.project
     api_token = utils.api_token
+    data_name = utils.data_name_dev
 
     # data preprocessing
-    data_preprocessing = DataPreprocessing(raw_data_path=raw_data_path)
+    data_preprocessing = DataPreprocessing(data_name=data_name)
     anomaly_detection = AnomalyDetection(
         data_preprocessing=data_preprocessing, seed=seed
     )
