@@ -213,7 +213,7 @@ class AnomalyDetection:
             emb_size=emb_size,
             output_size=self.num_classes_train,
         )
-        
+
         # if multiple gpus
         if self.n_gpus > 1:
             model = nn.DataParallel(model, device_ids=list(range(self.n_gpus)), dim=0)
