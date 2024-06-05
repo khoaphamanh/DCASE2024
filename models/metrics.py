@@ -77,7 +77,7 @@ class AdaCosLoss(nn.Module):
         self.w = nn.Parameter(
             data=torch.randn(size=(num_classes, emb_size)), requires_grad=True
         ).to(self.device)
-        self.class_weights = class_weights
+        self.class_weights = class_weights.to(self.device)
         self.scale = torch.sqrt(torch.tensor(2.0)) * torch.log(
             torch.tensor(num_classes - 1)
         )
