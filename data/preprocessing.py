@@ -17,11 +17,15 @@ raw_data_path = os.path.join(os.path.dirname(directory_path), data_dir)
 class DataPreprocessing:
     def __init__(
         self,
-        raw_data_path,
+        name_data,
     ):
         # directory information
-        self.raw_data_path = raw_data_path
-        self.data_path = os.path.join(os.path.dirname(self.raw_data_path), "data")
+        self.preprocessing_path = os.path.abspath(__file__)
+        self.data_path = os.path.dirname(self.preprocessing_path)
+        self.dcase_path = os.path.dirname(self.data_path)
+        if name_data == "develop":
+            name_data = "10902294"
+        self.raw_data_path = os.path.join(self.dcase_path, name_data)
 
         # data information
         self.machines = [i for i in os.listdir(self.raw_data_path) if "." not in i]
@@ -64,18 +68,22 @@ class DataPreprocessing:
                 for name in name_ts:
                     name_file = name.replace(".wav", "").split("_")
 
-                    name_file = [
-                        n
-                        for idx, n in enumerate(name_file)
-                        if idx not in [0, 1, 3, 4, 5]
-                    ]
+                    if type == "train":
+                        name_file = [
+                            n
+                            for idx, n in enumerate(name_file)
+                            if idx not in [0, 1, 3, 4, 5]
+                        ]
 
-                    # get the unique labels
-                    name_file.insert(0, self.machines[i])
-                    name_file = "_".join(name_file)
+                        # get the unique labels
+                        name_file.insert(0, self.machines[i])
+                        name_file = "_".join(name_file)
 
-                    if name_file not in unique_labels:
-                        unique_labels.append(name_file)
+                        # save it in unique labels
+                        if name_file not in unique_labels:
+                            unique_labels.append(name_file)
+                    else:
+                        name_file = name_file[4]
 
                     # get data instances and labels
                     name_path = os.path.join(type_path, name)
@@ -91,13 +99,18 @@ class DataPreprocessing:
         # nummerize the labels
         label_to_num = {label: num for num, label in enumerate(unique_labels)}
         train_label = [label_to_num[label] for label in train_label]
-        test_label = [label_to_num[label] for label in test_label]
+        test_label = [0 if label == "normal" else 1 for label in test_label]
 
         # save label_to_num as csv
         num_to_label = {str(num): label for (label, num) in label_to_num.items()}
         num_to_label = pd.DataFrame(
             list(num_to_label.items()), columns=["Number", "Label"]
         )
+        num_to_label_test = pd.DataFrame(
+            {"Number": [0, 1], "Label": ["normal", "anomaly"]}
+        )
+        num_to_label = pd.concat([num_to_label, num_to_label_test], ignore_index=True)
+
         num_to_label_path = os.path.join(self.data_path, "num_to_label.csv")
         num_to_label.to_csv(num_to_label_path, index=False)
 
@@ -198,7 +211,8 @@ if __name__ == "__main__":
 
     start = default_timer()
 
-    data_preprocessing = DataPreprocessing(raw_data_path=raw_data_path)
+    data_name = "develop"
+    data_preprocessing = DataPreprocessing(name_data=data_name)
 
     # data_path = data_preprocessing.data_path
     # print("data_path:", data_path)
@@ -218,7 +232,7 @@ if __name__ == "__main__":
     # label_to_num = data_preprocessing.read_data()
     fs = 16000
     train_data, train_label, test_data, test_label = data_preprocessing.load_data(
-        window_size=8000, hop_size=8000
+        window_size=None, hop_size=None
     )
     print("train_label:", train_label)
 
@@ -227,7 +241,7 @@ if __name__ == "__main__":
     print("unique_train len:", len(unique_train))
     print("unique_train:", unique_train)
     print()
-    unique_test = np.unique(test_label)
+    unique_test = np.unique(test_label, return_counts=True)
     print("unique_test len:", len(unique_test))
     print("unique_test:", unique_test)
 
