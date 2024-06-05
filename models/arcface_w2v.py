@@ -25,15 +25,25 @@ from metrics import AdaCosLoss, ArcFaceLoss
 # fine-tune model wav2vec
 class Wav2VecXLR300MCustom(nn.Module):
     def __init__(
-        self, model_name: str, emb_size: int, output_size: int, classifier_head=True
+        self,
+        model_name: str,
+        emb_size: int,
+        output_size: int,
+        classifier_head=True,
+        window_size=None,
     ):
         super().__init__()
+        if window_size == None:
+            window_size = 16000
+
+        flatten_dim = int((((window_size / 16000) * 50) - 1)) * 32
+
         self.pre_trained_wav2vec = Wav2Vec2ForCTC.from_pretrained(model_name)
         if classifier_head:
             self.out_layer = nn.Sequential(
                 nn.Flatten(),
                 nn.ReLU(),
-                nn.Linear(in_features=3168, out_features=emb_size),
+                nn.Linear(in_features=flatten_dim, out_features=emb_size),
                 nn.ReLU(),
                 nn.Linear(in_features=emb_size, out_features=output_size),
             )
@@ -41,7 +51,7 @@ class Wav2VecXLR300MCustom(nn.Module):
             self.out_layer = nn.Sequential(
                 nn.Flatten(),
                 nn.ReLU(),
-                nn.Linear(in_features=3168, out_features=emb_size),
+                nn.Linear(in_features=flatten_dim, out_features=emb_size),
             )
 
     def forward(self, x):
@@ -248,6 +258,7 @@ class AnomalyDetection:
             emb_size=emb_size,
             output_size=self.num_classes_train,
             classifier_head=classifier_head,
+            window_size=window_size,
         )
 
         # if multiple gpus
@@ -485,7 +496,7 @@ if __name__ == "__main__":
 
     # hyperparameters
     lr = utils.lr_np
-    emb_size = utils.emb_np
+    emb_size = utils.emb_size_np
     batch_size = utils.batch_size_np
     wd = utils.wd_np
     epochs = utils.epochs_np
@@ -495,6 +506,8 @@ if __name__ == "__main__":
     margin = utils.margin_np
     loss_name = utils.loss_name_np
     classifier_head = utils.classifier_head_np
+    window_size = utils.window_size_np
+    hop_size = utils.hop_size_np
 
     project = utils.project
     api_token = utils.api_token
@@ -520,6 +533,8 @@ if __name__ == "__main__":
         classifier_head=classifier_head,
         optimizer_name=optimizer_name,
         loss_name=loss_name,
+        window_size=window_size,
+        hop_size=hop_size,
     )
     # train_data, train_label = anomaly_detection.load_train_data()
     # print("train_data shape:", train_data.shape)
