@@ -49,6 +49,8 @@ class DataPreprocessing:
             ("ToyCar", "ToyTrain"): 12 * self.fs,
         }
 
+        # num to label csv
+
     def read_data(self):
         """
         Read the feature and labels from wave.mp4 files
@@ -204,6 +206,39 @@ class DataPreprocessing:
         elif train == True and test == False:
             return train_data.astype(np.float32), train_label.astype(np.int32)
 
+    def load_number_to_label(self):
+        """
+        load num_to_label csv
+        """
+        # num_to_label path
+        num_to_label_path = os.path.join(self.data_path, "num_to_label.csv")
+        if os.path.exists(num_to_label_path):
+
+            # read num_to_label csv
+            num_to_label = pd.read_csv(num_to_label_path)
+            label_dict = num_to_label["Label"].to_dict()
+
+            return label_dict
+        else:
+            return None
+
+    def domain_to_number(self):
+        """
+        get the number (label) of source and target
+        """
+        domain_dict = {}
+
+        # sort domain from number to label
+        label_dict = self.load_number_to_label()
+        if label_dict is not None:
+            domain_dict["source"] = [n for n, l in label_dict.items() if "source" in l]
+            domain_dict["target"] = [n for n, l in label_dict.items() if "target" in l]
+
+            return domain_dict
+
+        else:
+            return None
+
 
 if __name__ == "__main__":
 
@@ -230,25 +265,29 @@ if __name__ == "__main__":
     # load_data = data_preprocessing.create_data()
     # print("load_data:", load_data)
     # label_to_num = data_preprocessing.read_data()
-    fs = 16000
-    train_data, train_label, test_data, test_label = data_preprocessing.load_data(
-        window_size=None, hop_size=None
-    )
-    print("train_label:", train_label)
 
-    print("train_data shape:", train_data.shape)
-    unique_train = np.unique(train_label)
-    print("unique_train len:", len(unique_train))
-    print("unique_train:", unique_train)
-    print()
-    unique_test = np.unique(test_label, return_counts=True)
-    print("unique_test len:", len(unique_test))
-    print("unique_test:", unique_test)
+    # fs = 16000
+    # train_data, train_label, test_data, test_label = data_preprocessing.load_data(
+    #     window_size=None, hop_size=None
+    # )
+    # print("train_label:", train_label)
 
-    print(train_data[0])
-    print(train_data[1])
-    print(train_label[0])
-    print(train_label[1])
+    # print("train_data shape:", train_data.shape)
+    # unique_train = np.unique(train_label)
+    # print("unique_train len:", len(unique_train))
+    # print("unique_train:", unique_train)
+    # print()
+    # unique_test = np.unique(test_label, return_counts=True)
+    # print("unique_test len:", len(unique_test))
+    # print("unique_test:", unique_test)
+
+    # print(train_data[0])
+    # print(train_data[1])
+    # print(train_label[0])
+    # print(train_label[1])
+
+    out = data_preprocessing.domain_to_number()
+    print("out:", out)
 
     end = default_timer()
 
