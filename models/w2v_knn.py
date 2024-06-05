@@ -69,6 +69,7 @@ class AnomalyDetection:
 
         # data preprocessing
         self.data_preprocessing = data_preprocessing
+        self.domain_dict = data_preprocessing.domain_to_number()
 
         # time series information
         self.fs = data_preprocessing.fs
@@ -80,18 +81,18 @@ class AnomalyDetection:
         self.train_size = 0.8
         self.num_workers = 0
 
-    def load_train_data(self, window_size=None, hop_size=None):
+    def load_data(self, window_size=None, hop_size=None):
         """
-        Load train data with labels are attributes given window size and hop size. Defaulf is 16000 for both
+        Load train data with labels are attributes given window size and hop size. Defaulf is 16000 for hop size and 32000 for window size
         """
         # load data
-        X_train, y_train = self.data_preprocessing.load_data(
-            window_size=window_size, hop_size=hop_size, train=True, test=False
+        X_train, y_train, X_test, y_test = self.data_preprocessing.load_data(
+            window_size=window_size, hop_size=hop_size, train=True, test=True
         )
         # num classes, output size
         self.num_classes_train = len(np.unique(y_train))
 
-        return X_train, y_train
+        return X_train, y_train, X_test, y_test
 
     def standardize(self, X_train, X_val):
         """
@@ -122,18 +123,15 @@ class AnomalyDetection:
         """
         Turn data to pytorch,split it to train val and turn it to dataloader
         """
-        # load train data
-        X, y = self.load_train_data(window_size=window_size, hop_size=hop_size)
-
-        # split the data
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, train_size=self.train_size, random_state=self.seed, stratify=y
+        # load data
+        X_train, y_train, X_test, y_test = self.load_data(
+            window_size=window_size, hop_size=hop_size
         )
 
-        X_train, X_val = self.standardize(X_train=X_train, X_val=X_val)
+        X_train, X_test = self.standardize(X_train=X_train, X_val=X_test)
 
         len_train = len(X_train)
-        len_val = len(X_val)
+        len_test = len(X_test)
 
         # compute the class weights
         self.class_weights = torch.tensor(
@@ -147,7 +145,7 @@ class AnomalyDetection:
             torch.tensor(X_train).float(), torch.tensor(y_train).long()
         )
         val_data = TensorDataset(
-            torch.tensor(X_val).float(), torch.tensor(y_val).long()
+            torch.tensor(X_test).float(), torch.tensor(y_test).long()
         )
 
         train_loader = DataLoader(
@@ -160,7 +158,7 @@ class AnomalyDetection:
             val_data, batch_size=batch_size, shuffle=True, num_workers=self.num_workers
         )
 
-        return train_loader, val_loader, len_train, len_val
+        return train_loader, val_loader, len_train, len_test
 
     def plot_confusion_matrix(self, cm, name="train"):
         """
