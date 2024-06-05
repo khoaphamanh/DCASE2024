@@ -17,15 +17,15 @@ raw_data_path = os.path.join(os.path.dirname(directory_path), data_dir)
 class DataPreprocessing:
     def __init__(
         self,
-        name_data,
+        data_name,
     ):
         # directory information
         self.preprocessing_path = os.path.abspath(__file__)
         self.data_path = os.path.dirname(self.preprocessing_path)
         self.dcase_path = os.path.dirname(self.data_path)
-        if name_data == "develop":
-            name_data = "10902294"
-        self.raw_data_path = os.path.join(self.dcase_path, name_data)
+        if data_name == "develop":
+            data_name = "10902294"
+        self.raw_data_path = os.path.join(self.dcase_path, data_name)
 
         # data information
         self.machines = [i for i in os.listdir(self.raw_data_path) if "." not in i]
@@ -212,7 +212,7 @@ if __name__ == "__main__":
     start = default_timer()
 
     data_name = "develop"
-    data_preprocessing = DataPreprocessing(name_data=data_name)
+    data_preprocessing = DataPreprocessing(data_name=data_name)
 
     # data_path = data_preprocessing.data_path
     # print("data_path:", data_path)
