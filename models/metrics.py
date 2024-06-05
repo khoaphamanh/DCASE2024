@@ -15,7 +15,7 @@ class ArcFaceLoss(nn.Module):
         self.w = nn.Parameter(
             data=torch.randn(size=(num_classes, emb_size)), requires_grad=True
         ).to(self.device)
-        self.class_weights = class_weights
+        self.class_weights = class_weights.to(self.device)
 
     def forward(self, embedding, y_true):
 
