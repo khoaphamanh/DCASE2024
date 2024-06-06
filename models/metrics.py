@@ -15,7 +15,11 @@ class ArcFaceLoss(nn.Module):
         self.w = nn.Parameter(
             data=torch.randn(size=(num_classes, emb_size)), requires_grad=True
         ).to(self.device)
-        self.class_weights = class_weights.to(self.device)
+
+        if class_weights is not None:
+            self.class_weights = class_weights.to(self.device)
+        else:
+            self.class_weights = class_weights
 
     def forward(self, embedding, y_true):
 
@@ -77,10 +81,14 @@ class AdaCosLoss(nn.Module):
         self.w = nn.Parameter(
             data=torch.randn(size=(num_classes, emb_size)), requires_grad=True
         ).to(self.device)
-        self.class_weights = class_weights.to(self.device)
         self.scale = torch.sqrt(torch.tensor(2.0)) * torch.log(
             torch.tensor(num_classes - 1)
         )
+
+        if class_weights is not None:
+            self.class_weights = class_weights.to(self.device)
+        else:
+            self.class_weights = class_weights
 
     def forward(self, embedding, y_true):
 
