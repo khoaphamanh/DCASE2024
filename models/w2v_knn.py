@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import seaborn as sns
 from neptune.utils import stringify_unsupported
+from sklearn.neighbors import NearestNeighbors
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -70,6 +71,7 @@ class AnomalyDetection:
         # data preprocessing
         self.data_preprocessing = data_preprocessing
         self.domain_dict = data_preprocessing.domain_to_number()
+        self.data_name = data_preprocessing.data_name
 
         # time series information
         self.fs = data_preprocessing.fs
@@ -173,6 +175,54 @@ class AnomalyDetection:
 
         return fig
 
+    def get_source_target_indices(self, y_true):
+        """
+        get the source and target indices given y_true
+        """
+        # get the indices of the source and target in y_true
+        source_labels = self.domain_dict["source"]
+        target_labels = self.domain_dict["target"]
+        source_indices = np.where(np.isin(y_true, source_labels))[0]
+        target_indices = np.where(np.isin(y_true, target_labels))[0]
+
+        return source_indices, target_indices
+
+    def embedding_source_target(self, embedding_train_array, y_true):
+        """
+        split embedding source and target given embedding array and y_true array
+        """
+        # get the indices of the source and target in y_true
+        source_indices, target_indices = self.get_source_target_indices(y_true=y_true)
+
+        # split the embedding
+        embedding_source = embedding_train_array[source_indices]
+        embedding_target = embedding_train_array[target_indices]
+
+        return embedding_source, embedding_target
+
+    def accuracy_source_target(self, y_pred_label, y_true):
+        """
+        calculate the accuracy source and target in train data given y_true and y_pred_label
+        """
+        # get the indices of the source and target in y_true
+        source_indices, target_indices = self.get_source_target_indices(y_true=y_true)
+
+        # get the y_true and y_pred of source and targets
+        y_pred_source = y_pred_label[source_indices]
+        y_pred_target = y_pred_label[target_indices]
+
+        y_true_source = y_true[source_indices]
+        y_true_target = y_true[target_indices]
+
+        accuracy_train_source_this_batch = accuracy_score(
+            y_pred=y_pred_source, y_true=y_true_source
+        )
+        accuracy_train_target_this_batch = accuracy_score(
+            y_pred=y_pred_target, y_true=y_true_target
+        )
+
+        return accuracy_train_source_this_batch, accuracy_train_target_this_batch
+
     def train_test_loop(
         self,
         project: str,
@@ -183,13 +233,15 @@ class AnomalyDetection:
         lr: float,
         wd: int,
         epochs: int,
-        loss_name="cross_entropy",
+        k: int,
+        loss_name="adacos",
         optimizer_name="AdamW",
         classifier_head=True,
         scale=None,
         margin=None,
         window_size=None,
         hop_size=None,
+        distance=None,
     ):
         """
         Train test loop
@@ -198,7 +250,7 @@ class AnomalyDetection:
         run = neptune.init_run(project=project, api_token=api_token)
 
         # load dataloader
-        train_loader, val_loader, len_train, len_val = self.data_loader(
+        train_loader, test_loader, len_train, len_test = self.data_loader(
             batch_size=batch_size, window_size=window_size, hop_size=hop_size
         )
 
@@ -230,12 +282,13 @@ class AnomalyDetection:
             "device": self.device,
             "n_gpus": self.n_gpus,
             "num_workers": self.num_workers,
+            "data_name": self.data_name,
         }
 
         run["configurations"] = stringify_unsupported(configurations)
         run["hyperparameters"] = hyperparameters
 
-        # init model
+        # init model neural network
         model = Wav2VecXLR300MCustom(
             model_name=model_name,
             emb_size=emb_size,
@@ -244,17 +297,19 @@ class AnomalyDetection:
             window_size=window_size,
         )
 
+        # init model knn
+        if distance == None:
+            distance = "cosine"
+        knn_source = NearestNeighbors(n_neighbors=k, metric=distance)
+        knn_target = NearestNeighbors(n_neighbors=k, metric=distance)
+
         # if multiple gpus
         if self.n_gpus > 1:
             model = nn.DataParallel(model, device_ids=list(range(self.n_gpus)), dim=0)
         model = model.to(self.device)
 
         # loss
-        if loss_name == "cross_entropy":
-            self.class_weights = self.class_weights.to(self.device)
-            loss = nn.CrossEntropyLoss(weight=self.class_weights)
-
-        elif loss_name == "arcface":
+        if loss_name == "arcface":
             loss = ArcFaceLoss(
                 num_classes=self.num_classes_train,
                 emb_size=emb_size,
@@ -271,11 +326,7 @@ class AnomalyDetection:
             )
 
         # optimizer
-        parameters = (
-            list(model.parameters()) + list(loss.parameters())
-            if loss_name in ["arcface", "adacos"]
-            else model.parameters()
-        )
+        parameters = list(model.parameters()) + list(loss.parameters())
 
         if optimizer_name == "AdamW":
             optimizer = torch.optim.AdamW(params=parameters, lr=lr, weight_decay=wd)
@@ -288,20 +339,26 @@ class AnomalyDetection:
 
         # training loop:
         for ep in range(epochs):
+
+            # metrics init
             loss_train = 0
             accuracy_train = 0
+            accuracy_train_source = 0
+            accuracy_train_target = 0
             f1_train = 0
 
-            loss_val = 0
-            accuracy_val = 0
-            f1_val = 0
+            accuracy_test = 0
 
             # confustion matrix
-            y_train_cm = torch.empty(size=(len_train,))
-            y_pred_train_cm = torch.empty(size=(len_train,))
+            y_train_cm = np.empty(shape=(len_train,))
+            y_pred_train_cm = np.empty(shape=(len_train,))
 
-            y_val_cm = torch.empty(size=(len_val,))
-            y_pred_val_cm = torch.empty(size=(len_val,))
+            y_test_cm = np.empty(shape=(len_test,))
+            y_pred_test_cm = np.empty(shape=(len_test,))
+
+            # embedding array init
+            embedding_train_array = np.empty_like(shape=(len_train, emb_size))
+            embedding_test_array = np.empty_like(shape=(len_test, emb_size))
 
             # training mode
             model.train()
@@ -312,31 +369,42 @@ class AnomalyDetection:
                 y_train = y_train.to(self.device)
 
                 # forward pass
-                if loss_name in ["arcface", "adacos"]:
-                    embedding_train = model(X_train)
-                    y_pred_train_logit = loss.logits(
-                        embedding=embedding_train, y_true=y_train
-                    )
+                embedding_train = model(X_train)
+                embedding_train_array[
+                    batch_train * batch_size : batch_train * batch_size + batch_size
+                ] = embedding_train.cpu().numpy()
 
-                elif loss_name == "cross_entropy":
-                    y_pred_train_logit = model(X_train)
-
+                y_pred_train_logit = loss.logits(
+                    embedding=embedding_train, y_true=y_train
+                )
                 y_pred_train_label = y_pred_train_logit.argmax(dim=1)
 
                 # calculate the loss, accuracy, f1 score and confusion matrix
-                if loss_name in ["arcface", "adacos"]:
-                    loss_train_this_batch = loss(embedding_train, y_train)
-
-                elif loss_name == "cross_entropy":
-                    loss_train_this_batch = loss(y_pred_train_logit, y_train)
+                # loss
+                loss_train_this_batch = loss(embedding_train, y_train)
                 loss_train = loss_train + loss_train_this_batch.item()
 
+                # accuracy train
                 accuracy_train_this_batch = accuracy_score(
                     y_pred=y_pred_train_label.cpu().numpy(),
                     y_true=y_train.cpu().numpy(),
                 )
                 accuracy_train = accuracy_train + accuracy_train_this_batch
 
+                accuracy_train_source_this_batch, accuracy_train_target_this_batch = (
+                    self.accuracy_source_target(
+                        y_pred_label=y_pred_train_label.cpu().numpy(),
+                        y_true=y_train.cpu().numpy(),
+                    )
+                )
+                accuracy_train_source = (
+                    accuracy_train_source + accuracy_train_source_this_batch
+                )
+                accuracy_train_target = (
+                    accuracy_train_target + accuracy_train_target_this_batch
+                )
+
+                # f1 train
                 f1_train_this_batch = f1_score(
                     y_pred=y_pred_train_label.cpu().numpy(),
                     y_true=y_train.cpu().numpy(),
@@ -344,12 +412,13 @@ class AnomalyDetection:
                 )
                 f1_train = f1_train + f1_train_this_batch
 
+                # confusion matrix train
                 y_train_cm[
                     batch_train * batch_size : batch_train * batch_size + batch_size
-                ] = y_train.cpu()
+                ] = y_train.cpu().numpy()
                 y_pred_train_cm[
                     batch_train * batch_size : batch_train * batch_size + batch_size
-                ] = y_pred_train_label.cpu()
+                ] = y_pred_train_label.cpu().numpy()
 
                 # gradient decent, backpropagation and update parameters
                 optimizer.zero_grad()
@@ -359,66 +428,33 @@ class AnomalyDetection:
             # evaluation mode
             model.eval()
             with torch.inference_mode():
-                for batch_val, (X_val, y_val) in enumerate(val_loader):
+                for batch_test, (X_test, y_test) in enumerate(test_loader):
 
                     # to device
-                    X_val = X_val.to(self.device)
-                    y_val = y_val.to(self.device)
+                    X_test = X_test.to(self.device)
+                    y_test = y_test.to(self.device)
 
                     # forward pass
-                    if loss_name in ["arcface", "adacos"]:
-                        embedding_val = model(X_val)
-                        y_pred_val_logit = loss.logits(
-                            embedding=embedding_val, y_true=y_val
-                        )
-                    elif loss_name == "cross_entropy":
-                        y_pred_val_logit = model(X_val)
+                    embedding_test = model(X_test)
+                    embedding_test_array[
+                        batch_test * batch_size : batch_test * batch_size + batch_size
+                    ] = embedding_test.cpu().numpy()
 
-                    y_pred_val_label = y_pred_val_logit.argmax(dim=1)
-
-                    # calculate loss, accuracy, f1 score and confusion matrix
-                    if loss_name in ["arcface", "adacos"]:
-                        loss_val_this_batch = loss(embedding_val, y_val)
-                    elif loss_name == "cross_entropy":
-                        loss_val_this_batch = loss(y_pred_val_logit, y_val)
-                    loss_val = loss_val + loss_val_this_batch.item()
-
-                    accuracy_val_this_batch = accuracy_score(
-                        y_pred=y_pred_val_label.cpu().numpy(),
-                        y_true=y_val.cpu().numpy(),
-                    )
-                    accuracy_val = accuracy_val + accuracy_val_this_batch
-
-                    f1_val_this_batch = f1_score(
-                        y_pred=y_pred_val_label.cpu().numpy(),
-                        y_true=y_val.cpu().numpy(),
-                        average="weighted",
-                    )
-                    f1_val = f1_val + f1_val_this_batch
-
-                    y_val_cm[
-                        batch_val * batch_size : batch_val * batch_size + batch_size
-                    ] = y_val.cpu()
-                    y_pred_val_cm[
-                        batch_val * batch_size : batch_val * batch_size + batch_size
-                    ] = y_pred_val_label.cpu()
+            # fit embedding to knn models
+            source_index,
 
             # print out the metrics
             loss_train = loss_train / len(train_loader)
             accuracy_train = accuracy_train / len(train_loader)
+            accuracy_train_target = accuracy_train_target / len(train_loader)
+            accuracy_train_target = accuracy_train_target / len(train_loader)
             f1_train = f1_train / len(train_loader)
 
-            loss_val = loss_val / len(val_loader)
-            accuracy_val = accuracy_val / len(val_loader)
-            f1_val = f1_val / len(val_loader)
+            accuracy_test = accuracy_test / len(test_loader)
+            f1_test = f1_test / len(test_loader)
 
-            cm_train = confusion_matrix(
-                y_true=y_train_cm.cpu().numpy(),
-                y_pred=y_pred_train_cm.cpu().numpy(),
-            )
-            cm_val = confusion_matrix(
-                y_true=y_val_cm.cpu().numpy(), y_pred=y_pred_val_cm.cpu().numpy()
-            )
+            cm_train = confusion_matrix(y_true=y_train_cm, y_pred=y_pred_train_cm)
+            cm_val = confusion_matrix(y_true=y_test_cm, y_pred=y_pred_test_cm)
 
             print("epoch {}".format(ep))
             print(
@@ -426,15 +462,26 @@ class AnomalyDetection:
                     loss_train, accuracy_train, f1_train
                 )
             )
+            print(
+                "accuracy train source = {:.4f}, accuracy train target = {:.4f}".format(
+                    accuracy_train_source, accuracy_train_target
+                )
+            )
+            print(
+                "accuracy test = {:.4f},  f1 test = {:.4f}".format(
+                    accuracy_test, f1_test
+                )
+            )
 
             # log the metrics in neptune
             metrics = {
                 "loss_train": loss_train,
                 "accuracy_train": accuracy_train,
+                "accuracy_train_source": accuracy_train_source,
+                "accuracy_train_target": accuracy_train_target,
                 "f1_train": f1_train,
-                "loss_val": loss_val,
-                "accuracy_val": accuracy_val,
-                "f1_val": f1_val,
+                "accuracy_test": accuracy_test,
+                "f1_test": f1_test,
             }
 
             run["metrics"].append(metrics, step=ep)
