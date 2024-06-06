@@ -20,12 +20,14 @@ class DataPreprocessing:
         data_name,
     ):
         # directory information
+        self.data_name = data_name
         self.preprocessing_path = os.path.abspath(__file__)
         self.data_path = os.path.dirname(self.preprocessing_path)
         self.dcase_path = os.path.dirname(self.data_path)
         if data_name == "develop":
             data_name = "10902294"
         self.raw_data_path = os.path.join(self.dcase_path, data_name)
+        self.numn_classes_train = 67
 
         # data information
         self.machines = [i for i in os.listdir(self.raw_data_path) if "." not in i]
@@ -67,25 +69,19 @@ class DataPreprocessing:
             for i, machine_path in enumerate(self.machines_path):
                 type_path = os.path.join(machine_path, type)
                 name_ts = os.listdir(type_path)
+
                 for name in name_ts:
                     name_file = name.replace(".wav", "").split("_")
+                    name_file = [
+                        n for idx, n in enumerate(name_file) if idx not in [0, 1, 3, 5]
+                    ]
 
-                    if type == "train":
-                        name_file = [
-                            n
-                            for idx, n in enumerate(name_file)
-                            if idx not in [0, 1, 3, 4, 5]
-                        ]
+                    # get the unique labels
+                    name_file.insert(0, self.machines[i])
+                    name_file = "_".join(name_file)
 
-                        # get the unique labels
-                        name_file.insert(0, self.machines[i])
-                        name_file = "_".join(name_file)
-
-                        # save it in unique labels
-                        if name_file not in unique_labels:
-                            unique_labels.append(name_file)
-                    else:
-                        name_file = name_file[4]
+                    if name_file not in unique_labels:
+                        unique_labels.append(name_file)
 
                     # get data instances and labels
                     name_path = os.path.join(type_path, name)
@@ -101,17 +97,13 @@ class DataPreprocessing:
         # nummerize the labels
         label_to_num = {label: num for num, label in enumerate(unique_labels)}
         train_label = [label_to_num[label] for label in train_label]
-        test_label = [0 if label == "normal" else 1 for label in test_label]
+        test_label = [label_to_num[label] for label in test_label]
 
         # save label_to_num as csv
         num_to_label = {str(num): label for (label, num) in label_to_num.items()}
         num_to_label = pd.DataFrame(
             list(num_to_label.items()), columns=["Number", "Label"]
         )
-        num_to_label_test = pd.DataFrame(
-            {"Number": [0, 1], "Label": ["normal", "anomaly"]}
-        )
-        num_to_label = pd.concat([num_to_label, num_to_label_test], ignore_index=True)
 
         num_to_label_path = os.path.join(self.data_path, "num_to_label.csv")
         num_to_label.to_csv(num_to_label_path, index=False)
@@ -224,16 +216,33 @@ class DataPreprocessing:
 
     def domain_to_number(self):
         """
-        get the number (label) of source and target
+        get the number (label) of source and target in train data
         """
         domain_dict = {}
 
         # sort domain from number to label
         label_dict = self.load_number_to_label()
         if label_dict is not None:
-            domain_dict["source"] = [n for n, l in label_dict.items() if "source" in l]
-            domain_dict["target"] = [n for n, l in label_dict.items() if "target" in l]
-
+            domain_dict["source_train"] = [
+                n
+                for n, l in label_dict.items()
+                if "source" in l and n < self.numn_classes_train
+            ]
+            domain_dict["target_train"] = [
+                n
+                for n, l in label_dict.items()
+                if "target" in l and n < self.numn_classes_train
+            ]
+            domain_dict["normal_test"] = [
+                n
+                for n, l in label_dict.items()
+                if "normal" in l and n >= self.numn_classes_train
+            ]
+            domain_dict["anomaly_test"] = [
+                n
+                for n, l in label_dict.items()
+                if "anomaly" in l and n >= self.numn_classes_train
+            ]
             return domain_dict
 
         else:
@@ -266,28 +275,30 @@ if __name__ == "__main__":
     # print("load_data:", load_data)
     # label_to_num = data_preprocessing.read_data()
 
-    # fs = 16000
-    # train_data, train_label, test_data, test_label = data_preprocessing.load_data(
-    #     window_size=None, hop_size=None
-    # )
-    # print("train_label:", train_label)
+    fs = 16000
+    train_data, train_label, test_data, test_label = data_preprocessing.load_data(
+        window_size=None, hop_size=None
+    )
+    print("train_label:", train_label)
 
-    # print("train_data shape:", train_data.shape)
-    # unique_train = np.unique(train_label)
-    # print("unique_train len:", len(unique_train))
-    # print("unique_train:", unique_train)
-    # print()
-    # unique_test = np.unique(test_label, return_counts=True)
-    # print("unique_test len:", len(unique_test))
-    # print("unique_test:", unique_test)
+    print("train_data shape:", train_data.shape)
+    unique_train = np.unique(train_label)
+    print("unique_train len:", len(unique_train))
+    print("unique_train:", unique_train)
+    print()
+    unique_test = np.unique(test_label)
+    print("unique_test len:", len(unique_test))
+    print("unique_test:", unique_test)
 
-    # print(train_data[0])
-    # print(train_data[1])
-    # print(train_label[0])
-    # print(train_label[1])
-
+    data_name = data_preprocessing.data_name
+    print("data_name:", data_name)
     out = data_preprocessing.domain_to_number()
     print("out:", out)
+
+    anomaly_test = out["anomaly_test"]
+    print("anomaly_test len:", len(anomaly_test))
+    normal_test = out["normal_test"]
+    print("normal_test len:", len(normal_test))
 
     end = default_timer()
 
