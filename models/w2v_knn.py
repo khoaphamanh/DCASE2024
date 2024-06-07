@@ -1,6 +1,7 @@
 from transformers import Wav2Vec2ForCTC
 import numpy as np
 import torch
+import torch.nn.functional as F
 import sys
 import os
 from torch import nn
@@ -13,6 +14,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from neptune.utils import stringify_unsupported
 from sklearn.neighbors import NearestNeighbors
+from scipy.spatial.distance import mahalanobis
+from sklearn.metrics import roc_curve, auc
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -35,6 +38,7 @@ class Wav2VecXLR300MCustom(nn.Module):
         if window_size == None:
             window_size = 16000
 
+        self.classifier_head = classifier_head
         flatten_dim = int((((window_size / 16000) * 50) - 1)) * 32
 
         self.pre_trained_wav2vec = Wav2Vec2ForCTC.from_pretrained(model_name)
@@ -56,6 +60,8 @@ class Wav2VecXLR300MCustom(nn.Module):
     def forward(self, x):
         x = self.pre_trained_wav2vec(x).logits
         x = self.out_layer(x)
+        if self.classifier_head == False:
+            x = F.normalize(x)
         return x
 
 
@@ -69,12 +75,12 @@ class AnomalyDetection:
 
         # data preprocessing
         self.data_preprocessing = data_preprocessing
-        self.domain_dict = data_preprocessing.domain_to_number()
         self.data_name = data_preprocessing.data_name
         self.unique_labels_dict = data_preprocessing.load_unique_labels_dict()
         self.unique_labels_train = self.unique_labels_dict["train"]
         self.unique_labels_test = self.unique_labels_dict["test"]
         self.num_classes_train = len(self.unique_labels_train)
+        self.data_analysis_dict = data_preprocessing.data_analysis_dict()
 
         # time series information
         self.fs = data_preprocessing.fs
@@ -181,8 +187,8 @@ class AnomalyDetection:
         get the source and target indices given y_true
         """
         # get the indices of the source and target in y_true
-        source_labels = self.domain_dict["train_source"]
-        target_labels = self.domain_dict["train_target"]
+        source_labels = self.data_analysis_dict["train_source"]
+        target_labels = self.data_analysis_dict["train_target"]
         source_indices = np.where(np.isin(y_true, source_labels))[0]
         target_indices = np.where(np.isin(y_true, target_labels))[0]
 
@@ -193,8 +199,8 @@ class AnomalyDetection:
         get the normal and anomaly indices given y_true
         """
         # get the indices of the source and target in y_true
-        normal_labels = self.domain_dict["test_normal"]
-        anomaly_labels = self.domain_dict["test_anomaly"]
+        normal_labels = self.data_analysis_dict["test_normal"]
+        anomaly_labels = self.data_analysis_dict["test_anomaly"]
         normal_indices = np.where(np.isin(y_true, normal_labels))[0]
         anomaly_indices = np.where(np.isin(y_true, anomaly_labels))[0]
 
@@ -236,67 +242,199 @@ class AnomalyDetection:
 
         return accuracy_train_source_this_batch, accuracy_train_target_this_batch
 
-    def find_domain_knn(
+    def domain_anomaly_score_decision(
         self,
         knn_source,
         knn_target,
         embedding_test_array,
-        embedding_train_array,
+        embedding_train_source,
+        embedding_train_target,
         y_test_cm,
         percentile,
     ):
         """
         find the domain of a given embedding test array
         """
-        # split y_test to index of original time series and label
-        indices_timeseries = y_test_cm[:, 0]
-        labels = y_test_cm[:, 1]
+        # fit knn models
+        knn_source.fit(embedding_train_source)
+        knn_target.fit(embedding_train_target)
 
-        # find the distance to source and target
+        # split y_test to index of original time series and label
+        windows = y_test_cm[:, 0]
+
+        # find the cosine distance to source and target
         distance_source, _ = knn_source.kneighbors(embedding_test_array)
+        distance_source = np.mean(distance_source, axis=1)
+
         distance_target, _ = knn_target.kneighbors(embedding_test_array)
+        distance_target = np.mean(distance_target, axis=1)
+
         distance_concat = np.stack((distance_source, distance_target))
 
-        # calculate argmax
-        argmin_distance_all_window = np.argmin(distance_concat, axis=0)
-
-        # get the each time series index from window index. {index_timeseries:index_windows_of_this_timeseries}
-        unique_indices_ts = np.unique(indices_timeseries)
-        indices_ts_to_window_dict = {
-            element: np.where(indices_timeseries == element)[0]
-            for element in unique_indices_ts
+        # get the each time series index from window index. {time series:windows_of_this_timeseries}
+        timeseries = np.unique(windows)
+        ts_to_window_dict = {
+            element: np.where(windows == element)[0] for element in timeseries
         }
 
-        # get the domain for each time series: source 0, target 1
-        domain = {}
-        mahalobis_distance = {}
-        for idx_ts, idx_w in indices_ts_to_window_dict.items():
+        # calculate the mean, cov of embedding train source and target
+        mean_source = np.mean(embedding_train_source, axis=0)
+        cov_source = np.cov(embedding_train_source, rowvar=False)
 
-            # argmin of each window in a timeseries
-            argmin_distance_window_of_ts = argmin_distance_all_window[idx_w]
-            domain_votes, count_votes = np.unique(
-                argmin_distance_window_of_ts, return_counts=True
+        mean_target = np.mean(embedding_train_target, axis=0)
+        cov_target = np.cov(embedding_train_target, rowvar=False)
+
+        # Add a small regularization term to the diagonal of the covariance matrix to make it invertible
+        regularization_term = 1e-5
+        cov_source += regularization_term * np.eye(cov_source.shape[0])
+        cov_target += regularization_term * np.eye(cov_target.shape[0])
+
+        # Calculate the inverse of the covariance matrix
+        inv_cov_source = np.linalg.inv(cov_source)
+        inv_cov_target = np.linalg.inv(cov_target)
+
+        # get the threshold of the each mahanalobis distance
+        md_source = np.array(
+            [
+                mahalanobis(point, mean_source, inv_cov_source)
+                for point in embedding_train_source
+            ]
+        )
+        md_target = np.array(
+            [
+                mahalanobis(point, mean_target, inv_cov_target)
+                for point in embedding_train_target
+            ]
+        )
+
+        # get the threshold for the anomaly decision
+        threshold_source = np.percentile(md_source, percentile)
+        threshold_target = np.percentile(md_target, percentile)
+
+        # get the domain, anomaly score, anomaly decision for each time series (time series in range (0,1399)): source 0, target 1, normal 0, anomaly 1. {time series: domain}, {time series: mahalobis}, {time series: decision}
+        domain_dict = {}
+        anomaly_score = {}
+        anomaly_decision = {}
+
+        for ts, ws in ts_to_window_dict.items():
+
+            # distances of each window in a timeseries
+            distance_concat_windows_this_ts = distance_concat[:, ws]
+
+            # embedding of each timeseries
+            embedding_ts = embedding_test_array[:, ws]
+
+            # get the domain of this ts
+            argmin_flatten_distance = np.argmin(distance_concat_windows_this_ts)
+            argmin_distance = np.unravel_index(
+                argmin_flatten_distance, distance_concat_windows_this_ts.shape
             )
+            domain = argmin_distance[0]
+            domain_dict[ts] = domain
 
-            # get the index for each votes {0:index of 0, 1:index of 1}
-            domain_votes_dict = {
-                element: np.where(argmin_distance_window_of_ts == element)[0]
-                for element in domain_votes
-            }
+            # calculate mahanalobis distance as anomly score and anomaly decision
+            if domain == 0:
+                md = np.array(
+                    [
+                        mahalanobis(point, mean_source, inv_cov_source)
+                        for point in embedding_ts
+                    ]
+                )
+                md = np.max(md)
+                anomaly_decision[ts] = 1 if md > threshold_source else 0
 
-            # if source domain has more votes
-            if count_votes[0] > count_votes[1]:
-                domain = domain_votes[0]
+            elif domain == 1:
+                md = np.array(
+                    [
+                        mahalanobis(point, mean_target, inv_cov_target)
+                        for point in embedding_ts
+                    ]
+                )
+                md = np.max(md)
+                anomaly_decision[ts] = 1 if md > threshold_target else 0
 
-            # if target domain has more votes
-            elif count_votes[1] > count_votes[0]:
-                domain = domain_votes[1]
+        return domain_dict, anomaly_score, anomaly_decision
 
-            # if target domain and source domain have same votes
-            elif count_votes[1] == count_votes[0]:
-                1
+    def accuracy_domain_test(self, domain_dict, y_test_cm):
+        """
+        calculate accuracy domain prediction
+        """
+        # domain prediction of each ts
+        domain_pred = np.array(list(domain_dict.values()))
 
-            source_votes_index = domain_votes_dict[domain]
+        # y_true
+        test_source_labels = self.data_analysis_dict["test_source"]
+        y_true = {k: v for k, v in y_test_cm}
+        y_true = dict(sorted(y_true.items()))
+        y_true = {k: 0 if v in test_source_labels else 1 for k, v in y_true.items()}
+
+        # calculate accuracy domain
+        accuracy_domain = accuracy_score(y_pred=domain_pred, y_true=y_true)
+
+        return accuracy_domain
+
+    def accuracy_decision_test(self, anomaly_decision, y_test_cm):
+        """
+        calculate accuracy decision prediction
+        """
+        # decision prediction of each ts
+        y_pred = np.array(list(anomaly_decision.values()))
+
+        # y_true
+        test_normal_labels = self.data_analysis_dict["test_normal"]
+        y_true = {k: v for k, v in y_test_cm}
+        y_true = dict(sorted(y_true.items()))
+        y_true = {k: 0 if v in test_normal_labels else 1 for k, v in y_true.items()}
+
+        # calculate accuracy decision
+        accuracy_decision = accuracy_score(y_pred=y_pred, y_true=y_true)
+
+        return accuracy_decision
+
+    def aucroc_anomaly_score(self, anomaly_score, y_test_cm):
+        """
+        calculate auroc given anomaly scire and y_test
+        """
+        # y score
+        y_score = np.array(list(anomaly_score.values()))
+
+        # y_true
+        test_normal_labels = self.data_analysis_dict["test_normal"]
+        y_true = {k: v for k, v in y_test_cm}
+        y_true = dict(sorted(y_true.items()))
+        y_true = {k: 0 if v in test_normal_labels else 1 for k, v in y_true.items()}
+
+        # roc auc
+        fpr, tpr, thresholds = roc_curve(y_score=y_score, y_true=y_true)
+        roc_auc = auc(fpr, tpr)
+
+        # plot
+        fig = self.plot_auroc(fpr=fpr, tpr=tpr, roc_auc=roc_auc)
+
+        return roc_auc, fig
+
+    def plot_auroc(self, fpr, tpr, roc_auc):
+        """
+        plot the auroc curve
+        """
+        # Plot ROC curve
+        fig = plt.figure(figsize=(10, 10))
+        plt.plot(
+            fpr,
+            tpr,
+            color="darkorange",
+            lw=2,
+            label=f"ROC curve (area = {roc_auc:.2f})",
+        )
+        plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.title("Receiver Operating Characteristic")
+        plt.legend(loc="lower right")
+
+        return fig
 
     def train_test_loop(
         self,
@@ -430,7 +568,6 @@ class AnomalyDetection:
             y_pred_train_cm = np.empty(shape=(len_train,))
 
             y_test_cm = np.empty(shape=(2, len_test))
-            y_pred_test_cm = np.empty(shape=(len_test,))
 
             # embedding array init
             embedding_train_array = np.empty_like(shape=(len_train, emb_size))
@@ -526,8 +663,34 @@ class AnomalyDetection:
                     embedding_train_array=embedding_train_array, y_true=y_train_cm
                 )
             )
-            knn_source.fit(embedding_train_source)
-            knn_target.fit(embedding_train_target)
+
+            # domain, anomaly score and anomaly decision
+            domain_dict, anomaly_score, anomaly_decision = (
+                self.domain_anomaly_score_decision(
+                    knn_source=knn_source,
+                    knn_target=knn_target,
+                    embedding_test_array=embedding_test_array,
+                    embedding_train_source=embedding_train_source,
+                    embedding_train_target=embedding_train_target,
+                    y_test_cm=y_test_cm,
+                    percentile=percentile,
+                )
+            )
+
+            # accuracy domain test
+            accuracy_domain = self.accuracy_domain_test(
+                domain_dict=domain_dict, y_test_cm=y_test_cm
+            )
+
+            # accuracy anomaly decision
+            accuracy_decision = self.accuracy_decision_test(
+                anomaly_decision=anomaly_decision, y_test_cm=y_test_cm
+            )
+
+            # roc_auc
+            roc_auc, roc_auc_fig = self.aucroc_anomaly_score(
+                anomaly_score=accuracy_score, y_test_cm=y_test
+            )
 
             # print out the metrics
             loss_train = loss_train / len(train_loader)
@@ -540,7 +703,6 @@ class AnomalyDetection:
             f1_test = f1_test / len(test_loader)
 
             cm_train = confusion_matrix(y_true=y_train_cm, y_pred=y_pred_train_cm)
-            cm_val = confusion_matrix(y_true=y_test_cm, y_pred=y_pred_test_cm)
 
             print("epoch {}".format(ep))
             print(
@@ -554,8 +716,8 @@ class AnomalyDetection:
                 )
             )
             print(
-                "accuracy test = {:.4f},  f1 test = {:.4f}".format(
-                    accuracy_test, f1_test
+                "accuracy domain = {:.4f},  accuracy decision = {:.4f}, roc_auc = {:.4f}".format(
+                    accuracy_domain, accuracy_decision, roc_auc
                 )
             )
 
@@ -568,16 +730,18 @@ class AnomalyDetection:
                 "f1_train": f1_train,
                 "accuracy_test": accuracy_test,
                 "f1_test": f1_test,
+                "accuracy domain": accuracy_domain,
+                "accuracy decision": accuracy_decision,
+                "roc auc": roc_auc,
             }
 
             run["metrics"].append(metrics, step=ep)
 
+            run["metrics/roc_auc"].append(roc_auc_fig, step=ep)
+            plt.close()
             cm_train_fig = self.plot_confusion_matrix(cm=cm_train, name="train")
             plt.close()
-            cm_val_fig = self.plot_confusion_matrix(cm=cm_val, name="val")
-            plt.close()
             run["metrics/confusion_matrix_train"].append(cm_train_fig, step=ep)
-            run["metrics/confusion_matrix_val"].append(cm_val_fig, step=ep)
 
         # running time
         run["runing_time"] = run["sys/running_time"]
@@ -603,19 +767,22 @@ if __name__ == "__main__":
         torch.backends.cudnn.benchmark = False
 
     # hyperparameters
-    lr = utils.lr_np
-    emb_size = utils.emb_size_np
-    batch_size = utils.batch_size_np
-    wd = utils.wd_np
-    epochs = utils.epochs_np
-    optimizer_name = utils.optimizer_name_np
-    model_name = utils.model_name_np
-    scale = utils.scale_np
-    margin = utils.margin_np
-    loss_name = utils.loss_name_np
-    classifier_head = utils.classifier_head_np
-    window_size = utils.window_size_np
-    hop_size = utils.hop_size_np
+    lr = utils.lr_dev
+    emb_size = utils.emb_size_dev
+    batch_size = utils.batch_size_dev
+    wd = utils.wd_dev
+    epochs = utils.epochs_dev
+    optimizer_name = utils.optimizer_name_dev
+    model_name = utils.model_name_dev
+    scale = utils.scale_dev
+    margin = utils.margin_dev
+    loss_name = utils.loss_name_dev
+    classifier_head = utils.classifier_head_dev
+    window_size = utils.window_size_dev
+    hop_size = utils.hop_size_dev
+    k = utils.k_dev
+    percentile = utils.percentile_dev
+    distance = utils.distance_dev
 
     # general hyperparameters
     project = utils.project
@@ -638,6 +805,8 @@ if __name__ == "__main__":
         lr=lr,
         wd=wd,
         epochs=epochs,
+        k=k,
+        percentile=percentile,
         scale=scale,
         margin=margin,
         classifier_head=classifier_head,
@@ -645,6 +814,7 @@ if __name__ == "__main__":
         loss_name=loss_name,
         window_size=window_size,
         hop_size=hop_size,
+        distance=distance,
     )
     # train_data, train_label = anomaly_detection.load_train_data()
     # print("train_data shape:", train_data.shape)
