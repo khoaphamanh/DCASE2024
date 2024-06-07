@@ -155,14 +155,19 @@ class DataPreprocessing:
             (test_data, test_label, test_windows, test_label_windows),
         ]
 
-        for type_data, type_label, windows, label_windows in data:
-            for ts, lb in zip(type_data, type_label):
+        for idx_data, (type_data, type_label, windows, label_windows) in enumerate(
+            data
+        ):
+            for idx_ts, (ts, lb) in enumerate(zip(type_data, type_label)):
                 n_samples = len(ts)
                 n_windows = (n_samples - window_size) // hop_size + 1
                 for n in range(n_windows):
                     ts_window = ts[n * hop_size : n * hop_size + window_size]
                     windows.append(ts_window)
-                    label_windows.append(lb)
+                    if idx_data == 1:
+                        label_windows.append([idx_ts, lb])
+                    else:
+                        label_windows.append(lb)
 
         return (
             np.array(train_windows),
@@ -317,19 +322,10 @@ if __name__ == "__main__":
     train_data, train_label, test_data, test_label = data_preprocessing.load_data(
         window_size=None, hop_size=None
     )
-    print("train_label:", train_label)
+    print("test_label:", test_label)
 
-    print("train_data shape:", train_data.shape)
-    unique_train = np.unique(train_label)
-    print("unique_train len:", len(unique_train))
-    print("unique_train:", unique_train)
-    print()
-    unique_test = np.unique(test_label)
-    print("unique_test len:", len(unique_test))
-    print("unique_test:", unique_test)
-
-    data_name = data_preprocessing.data_name
-    print("data_name:", data_name)
+    unique_labels_dict = data_preprocessing.load_unique_labels_dict()
+    print("unique_labels_dict:", unique_labels_dict)
     out = data_preprocessing.domain_to_number()
     print("out:", out)
 
