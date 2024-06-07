@@ -252,7 +252,7 @@ class DataPreprocessing:
 
         return unique_labels_dict
 
-    def domain_to_number(self):
+    def data_analysis_dict(self):
         """
         get the number (label) of source and target in train data
         """
@@ -285,6 +285,16 @@ class DataPreprocessing:
                 n
                 for n, l in label_dict.items()
                 if "anomaly" in l and n in unique_test_labels
+            ]
+            domain_dict["test_source"] = [
+                n
+                for n, l in label_dict.items()
+                if "source" in l and n in unique_test_labels
+            ]
+            domain_dict["test_target"] = [
+                n
+                for n, l in label_dict.items()
+                if "target" in l and n in unique_test_labels
             ]
             return domain_dict
 
@@ -323,21 +333,16 @@ if __name__ == "__main__":
         window_size=None, hop_size=None
     )
     print("test_label:", test_label)
+    print("len test_label:", len(test_label))
+    print("unique ts index", np.unique(test_label[:, 0]))
 
     unique_labels_dict = data_preprocessing.load_unique_labels_dict()
     print("unique_labels_dict:", unique_labels_dict)
-    out = data_preprocessing.domain_to_number()
+    out = data_preprocessing.data_analysis_dict()
     print("out:", out)
 
-    train_source = out["train_source"]
-    print("source_train len:", len(train_source))
-    target_train = out["train_target"]
-    print("target_train len:", len(target_train))
-
-    anomaly_test = out["test_anomaly"]
-    print("anomaly_test len:", len(anomaly_test))
-    normal_test = out["test_normal"]
-    print("normal_test len:", len(normal_test))
+    for k, v in out.items():
+        print(k, len(v))
 
     end = default_timer()
 
