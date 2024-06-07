@@ -2,6 +2,7 @@ import os
 import numpy as np
 from scipy.io import wavfile
 import pandas as pd
+import pickle
 
 # Get the absolute path of the current file
 file_path = os.path.abspath(__file__)
@@ -27,7 +28,6 @@ class DataPreprocessing:
         if data_name == "develop":
             data_name = "10902294"
         self.raw_data_path = os.path.join(self.dcase_path, data_name)
-        self.numn_classes_train = 67
 
         # data information
         self.machines = [i for i in os.listdir(self.raw_data_path) if "." not in i]
@@ -52,6 +52,10 @@ class DataPreprocessing:
         }
 
         # num to label csv
+        self.num_to_label_path = os.path.join(self.data_path, "num_to_label.csv")
+        self.unique_labels_dict_path = os.path.join(
+            self.data_path, "unique_labels_dict.pkl"
+        )
 
     def read_data(self):
         """
@@ -63,6 +67,7 @@ class DataPreprocessing:
         test_data = []
         test_label = []
 
+        unique_labels_dict = {"train": [], "test": []}
         unique_labels = []
 
         for type in ["train", "test"]:
@@ -90,9 +95,15 @@ class DataPreprocessing:
                     if type == "train":
                         train_data.append(ts)
                         train_label.append(name_file)
+
+                        if name_file not in unique_labels_dict["train"]:
+                            unique_labels_dict["train"].append(name_file)
                     else:
                         test_data.append(ts)
                         test_label.append(name_file)
+
+                        if name_file not in unique_labels_dict["test"]:
+                            unique_labels_dict["test"].append(name_file)
 
         # nummerize the labels
         label_to_num = {label: num for num, label in enumerate(unique_labels)}
@@ -104,9 +115,19 @@ class DataPreprocessing:
         num_to_label = pd.DataFrame(
             list(num_to_label.items()), columns=["Number", "Label"]
         )
+        num_to_label.to_csv(self.num_to_label_path, index=False)
 
-        num_to_label_path = os.path.join(self.data_path, "num_to_label.csv")
-        num_to_label.to_csv(num_to_label_path, index=False)
+        # numerize the unique labels dict
+        unique_labels_dict["train"] = [
+            label_to_num[label] for label in unique_labels_dict["train"]
+        ]
+        unique_labels_dict["test"] = [
+            label_to_num[label] for label in unique_labels_dict["test"]
+        ]
+
+        # save it unique labels dict as pkl
+        with open(self.unique_labels_dict_path, "wb") as file:
+            pickle.dump(unique_labels_dict, file)
 
         return train_data, train_label, test_data, test_label
 
@@ -203,16 +224,28 @@ class DataPreprocessing:
         load num_to_label csv
         """
         # num_to_label path
-        num_to_label_path = os.path.join(self.data_path, "num_to_label.csv")
-        if os.path.exists(num_to_label_path):
+        if os.path.exists(self.num_to_label_path):
 
             # read num_to_label csv
-            num_to_label = pd.read_csv(num_to_label_path)
+            num_to_label = pd.read_csv(self.num_to_label_path)
             label_dict = num_to_label["Label"].to_dict()
 
             return label_dict
         else:
             return None
+
+    def load_unique_labels_dict(self):
+        """
+        load unique_labels_dict pkl
+        """
+        # unique_labels_dict path
+        if os.path.exists(self.unique_labels_dict_path):
+
+            # read the dict
+            with open(self.unique_labels_dict_path, "rb") as file:
+                unique_labels_dict = pickle.load(file)
+
+        return unique_labels_dict
 
     def domain_to_number(self):
         """
@@ -220,28 +253,33 @@ class DataPreprocessing:
         """
         domain_dict = {}
 
+        # get the unique labels train and test
+        unique_labels_dict = self.load_unique_labels_dict()
+        unique_train_labels = unique_labels_dict["train"]
+        unique_test_labels = unique_labels_dict["test"]
+
         # sort domain from number to label
         label_dict = self.load_number_to_label()
         if label_dict is not None:
-            domain_dict["source_train"] = [
+            domain_dict["train_source"] = [
                 n
                 for n, l in label_dict.items()
-                if "source" in l and n < self.numn_classes_train
+                if "source" in l and n in unique_train_labels
             ]
-            domain_dict["target_train"] = [
+            domain_dict["train_target"] = [
                 n
                 for n, l in label_dict.items()
-                if "target" in l and n < self.numn_classes_train
+                if "target" in l and n in unique_train_labels
             ]
-            domain_dict["normal_test"] = [
+            domain_dict["test_normal"] = [
                 n
                 for n, l in label_dict.items()
-                if "normal" in l and n >= self.numn_classes_train
+                if "normal" in l and n in unique_test_labels
             ]
-            domain_dict["anomaly_test"] = [
+            domain_dict["test_anomaly"] = [
                 n
                 for n, l in label_dict.items()
-                if "anomaly" in l and n >= self.numn_classes_train
+                if "anomaly" in l and n in unique_test_labels
             ]
             return domain_dict
 
@@ -295,9 +333,14 @@ if __name__ == "__main__":
     out = data_preprocessing.domain_to_number()
     print("out:", out)
 
-    anomaly_test = out["anomaly_test"]
+    train_source = out["train_source"]
+    print("source_train len:", len(train_source))
+    target_train = out["train_target"]
+    print("target_train len:", len(target_train))
+
+    anomaly_test = out["test_anomaly"]
     print("anomaly_test len:", len(anomaly_test))
-    normal_test = out["normal_test"]
+    normal_test = out["test_normal"]
     print("normal_test len:", len(normal_test))
 
     end = default_timer()
