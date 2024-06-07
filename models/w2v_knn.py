@@ -4,7 +4,6 @@ import torch
 import sys
 import os
 from torch import nn
-from sklearn.model_selection import train_test_split
 from sklearn.utils import class_weight
 from torch.utils.data import DataLoader, TensorDataset
 import neptune
@@ -17,7 +16,7 @@ from sklearn.neighbors import NearestNeighbors
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from data.preprocessing import DataPreprocessing, raw_data_path
+from data.preprocessing import DataPreprocessing
 import utils
 from metrics import AdaCosLoss, ArcFaceLoss
 
@@ -72,6 +71,10 @@ class AnomalyDetection:
         self.data_preprocessing = data_preprocessing
         self.domain_dict = data_preprocessing.domain_to_number()
         self.data_name = data_preprocessing.data_name
+        self.unique_labels_dict = data_preprocessing.load_unique_labels_dict()
+        self.unique_labels_train = self.unique_labels_dict["train"]
+        self.unique_labels_test = self.unique_labels_dict["test"]
+        self.num_classes_train = len(self.unique_labels_train)
 
         # time series information
         self.fs = data_preprocessing.fs
@@ -91,8 +94,6 @@ class AnomalyDetection:
         X_train, y_train, X_test, y_test = self.data_preprocessing.load_data(
             window_size=window_size, hop_size=hop_size, train=True, test=True
         )
-        # num classes, output size
-        self.num_classes_train = len(np.unique(y_train))
 
         return X_train, y_train, X_test, y_test
 
@@ -180,12 +181,24 @@ class AnomalyDetection:
         get the source and target indices given y_true
         """
         # get the indices of the source and target in y_true
-        source_labels = self.domain_dict["source"]
-        target_labels = self.domain_dict["target"]
+        source_labels = self.domain_dict["train_source"]
+        target_labels = self.domain_dict["train_target"]
         source_indices = np.where(np.isin(y_true, source_labels))[0]
         target_indices = np.where(np.isin(y_true, target_labels))[0]
 
         return source_indices, target_indices
+
+    def get_normal_anomaly_indices(self, y_true):
+        """
+        get the normal and anomaly indices given y_true
+        """
+        # get the indices of the source and target in y_true
+        normal_labels = self.domain_dict["test_normal"]
+        anomaly_labels = self.domain_dict["test_anomaly"]
+        normal_indices = np.where(np.isin(y_true, normal_labels))[0]
+        anomaly_indices = np.where(np.isin(y_true, anomaly_labels))[0]
+
+        return normal_indices, anomaly_indices
 
     def embedding_source_target(self, embedding_train_array, y_true):
         """
@@ -223,6 +236,68 @@ class AnomalyDetection:
 
         return accuracy_train_source_this_batch, accuracy_train_target_this_batch
 
+    def find_domain_knn(
+        self,
+        knn_source,
+        knn_target,
+        embedding_test_array,
+        embedding_train_array,
+        y_test_cm,
+        percentile,
+    ):
+        """
+        find the domain of a given embedding test array
+        """
+        # split y_test to index of original time series and label
+        indices_timeseries = y_test_cm[:, 0]
+        labels = y_test_cm[:, 1]
+
+        # find the distance to source and target
+        distance_source, _ = knn_source.kneighbors(embedding_test_array)
+        distance_target, _ = knn_target.kneighbors(embedding_test_array)
+        distance_concat = np.stack((distance_source, distance_target))
+
+        # calculate argmax
+        argmin_distance_all_window = np.argmin(distance_concat, axis=0)
+
+        # get the each time series index from window index. {index_timeseries:index_windows_of_this_timeseries}
+        unique_indices_ts = np.unique(indices_timeseries)
+        indices_ts_to_window_dict = {
+            element: np.where(indices_timeseries == element)[0]
+            for element in unique_indices_ts
+        }
+
+        # get the domain for each time series: source 0, target 1
+        domain = {}
+        mahalobis_distance = {}
+        for idx_ts, idx_w in indices_ts_to_window_dict.items():
+
+            # argmin of each window in a timeseries
+            argmin_distance_window_of_ts = argmin_distance_all_window[idx_w]
+            domain_votes, count_votes = np.unique(
+                argmin_distance_window_of_ts, return_counts=True
+            )
+
+            # get the index for each votes {0:index of 0, 1:index of 1}
+            domain_votes_dict = {
+                element: np.where(argmin_distance_window_of_ts == element)[0]
+                for element in domain_votes
+            }
+
+            # if source domain has more votes
+            if count_votes[0] > count_votes[1]:
+                domain = domain_votes[0]
+
+            # if target domain has more votes
+            elif count_votes[1] > count_votes[0]:
+                domain = domain_votes[1]
+
+            # if target domain and source domain have same votes
+            elif count_votes[1] == count_votes[0]:
+                1
+
+            source_votes_index = domain_votes_dict[domain]
+
     def train_test_loop(
         self,
         project: str,
@@ -234,6 +309,7 @@ class AnomalyDetection:
         wd: int,
         epochs: int,
         k: int,
+        percentile: float,
         loss_name="adacos",
         optimizer_name="AdamW",
         classifier_head=True,
@@ -353,7 +429,7 @@ class AnomalyDetection:
             y_train_cm = np.empty(shape=(len_train,))
             y_pred_train_cm = np.empty(shape=(len_train,))
 
-            y_test_cm = np.empty(shape=(len_test,))
+            y_test_cm = np.empty(shape=(2, len_test))
             y_pred_test_cm = np.empty(shape=(len_test,))
 
             # embedding array init
@@ -432,7 +508,6 @@ class AnomalyDetection:
 
                     # to device
                     X_test = X_test.to(self.device)
-                    y_test = y_test.to(self.device)
 
                     # forward pass
                     embedding_test = model(X_test)
@@ -440,8 +515,19 @@ class AnomalyDetection:
                         batch_test * batch_size : batch_test * batch_size + batch_size
                     ] = embedding_test.cpu().numpy()
 
+                    # all y test
+                    y_test_cm[
+                        batch_test * batch_size : batch_test * batch_size + batch_size
+                    ] = y_test.cpu().numpy()
+
             # fit embedding to knn models
-            source_index,
+            embedding_train_source, embedding_train_target = (
+                self.embedding_source_target(
+                    embedding_train_array=embedding_train_array, y_true=y_train_cm
+                )
+            )
+            knn_source.fit(embedding_train_source)
+            knn_target.fit(embedding_train_target)
 
             # print out the metrics
             loss_train = loss_train / len(train_loader)
