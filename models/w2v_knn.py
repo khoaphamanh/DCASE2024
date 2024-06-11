@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from neptune.utils import stringify_unsupported
 from sklearn.neighbors import NearestNeighbors
-from scipy.spatial.distance import mahalanobis
 from sklearn.metrics import roc_curve, auc
 
 # add path from data preprocessing in data directory
@@ -183,38 +182,106 @@ class AnomalyDetection:
 
         return fig
 
-    def get_source_target_indices(self, y_true, data_type="train", elim=False):
+    def get_source_target_indices(self, y_true, data_type="train", classification=True):
         """
-        get the source and target indices given y_true, elim for the case that label
+        get the source and target indices given y_true, elim for the case that label without anomaly normal.
         """
         # check data type
         if data_type == "train":
             source = "train_source"
             target = "train_target"
-        elif data_type == "test" and elim == False:
+
+        elif data_type == "test" and classification == False:
             source = "test_source"
             target = "test_target"
-        elif data_type == "test" and elim == True:
+
+        # this case use for check test loss/accuracy in classification task
+        elif data_type == "test" and classification == True:
             source = "train_source"
             target = "train_target"
+            y_true = y_true[:, 2]
+            print("y_true:", y_true)
+            print("y_true len:", len(y_true))
 
         # get the indices of the source and target in y_true
         source_labels = self.data_analysis_dict[source]
+        print("source_labels len:", len(source_labels))
         target_labels = self.data_analysis_dict[target]
+        print("target_labels len:", len(target_labels))
 
-        # eliminate the labels, y_true for this case should be y_test_att
-        if elim:
-            elim_labels = self.elim_labels
-            source_labels = [i for i in source_labels if i not in elim_labels]
-            target_labels = [i for i in target_labels if i not in elim_labels]
+        # # eliminate the labels, y_true for this case should be without normal anomaly
+        # if classification:
+        #     source_labels = [i for i in source_labels if i not in self.elim_labels]
+        #     print("source_labels len:", len(source_labels))
+        #     target_labels = [i for i in target_labels if i not in self.elim_labels]
+        #     print("target_labels len:", len(target_labels))
 
         source_indices = np.where(np.isin(y_true, source_labels))[0]
-        # print("source_indices shape:", source_indices)
         target_indices = np.where(np.isin(y_true, target_labels))[0]
 
-        # print("target_indices shape:", target_indices)
-
         return source_indices, target_indices
+
+    def accuracy_source_target(
+        self, y_pred_label, y_true, data_type="train", classification=True
+    ):
+        """
+        calculate the accuracy source and target in train data given y_true and y_pred_label
+        """
+        # get the indices of the source and target in y_true
+        source_indices, target_indices = self.get_source_target_indices(
+            y_true=y_true, data_type=data_type, classification=classification
+        )
+
+        # check elim for case test classification
+        if classification:
+            y_true = y_true[:, 2]
+
+        # get the y_true and y_pred of source and targets
+        y_pred_source = y_pred_label[source_indices]
+        y_pred_target = y_pred_label[target_indices]
+        y_true_source = y_true[source_indices]
+        y_true_target = y_true[target_indices]
+
+        # get the accuracy source and target
+        accuracy_train_source_this_batch = accuracy_score(
+            y_pred=y_pred_source, y_true=y_true_source
+        )
+        accuracy_train_target_this_batch = accuracy_score(
+            y_pred=y_pred_target, y_true=y_true_target
+        )
+
+        return accuracy_train_source_this_batch, accuracy_train_target_this_batch
+
+    def loss_source_target(
+        self, embedding_array, y_true, loss, data_type="train", classification=False
+    ):
+        """
+        calculate the loss source and target
+        """
+        # get the source and target index based on given y_true
+        source_indices, target_indices = self.get_source_target_indices(
+            y_true=y_true, data_type=data_type, classification=classification
+        )
+
+        # check elim for case test classification
+        if classification:
+            y_true = y_true[:, 2]
+
+        # get the y_true and y_pred of source and targets
+        embedding_source = embedding_array[source_indices]
+        embedding_target = embedding_array[target_indices]
+        y_true_source = y_true[source_indices]
+        print("y_true_source:", y_true_source)
+        print("max y_true_source:", np.max(y_true_source))
+        y_true_target = y_true[target_indices]
+        print("max y_true_target:", np.max(y_true_target))
+        print("y_true_target:", y_true_target)
+
+        # get the source and target loss
+        loss_source = loss.calculate_loss(embedding_source, y_true_source)
+        loss_target = loss.calculate_loss(embedding_target, y_true_target)
+
+        return loss_source, loss_target
 
     # def get_normal_anomaly_indices(self, y_true):
     #     """
@@ -238,138 +305,61 @@ class AnomalyDetection:
         """
         # get the indices of the source and target in y_true
         source_indices, target_indices = self.get_source_target_indices(
-            y_true=y_true, data_type=data_type, elim=elim
+            y_true=y_true, data_type=data_type, classification=elim
         )
 
         # split the embedding
         embedding_source = embedding_array[source_indices]
-        # print("embedding_source:", embedding_source)
         embedding_target = embedding_array[target_indices]
-        # print("embedding_target:", embedding_target)
 
         return embedding_source, embedding_target
-
-    def accuracy_source_target(
-        self, y_pred_label, y_true, data_type="train", elim=False
-    ):
-        """
-        calculate the accuracy source and target in train data given y_true and y_pred_label
-        """
-        # get the indices of the source and target in y_true
-        source_indices, target_indices = self.get_source_target_indices(
-            y_true=y_true, data_type=data_type, elim=elim
-        )
-
-        # get the y_true and y_pred of source and targets
-        y_pred_source = y_pred_label[source_indices]
-        y_pred_target = y_pred_label[target_indices]
-        y_true_source = y_true[source_indices]
-        y_true_target = y_true[target_indices]
-
-        # get the accuracy source and target
-        accuracy_train_source_this_batch = accuracy_score(
-            y_pred=y_pred_source, y_true=y_true_source
-        )
-        accuracy_train_target_this_batch = accuracy_score(
-            y_pred=y_pred_target, y_true=y_true_target
-        )
-
-        return accuracy_train_source_this_batch, accuracy_train_target_this_batch
-
-    def loss_source_target(
-        self, embedding_array, y_true, loss, data_type="train", elim=False
-    ):
-        """
-        calculate the loss source and target
-        """
-        # get the source and target index based on given y_true
-        source_indices, target_indices = self.get_source_target_indices(
-            y_true=y_true, data_type=data_type, elim=elim
-        )
-
-        # get the y_true and y_pred of source and targets
-        embedding_source = embedding_array[source_indices]
-        embedding_target = embedding_array[target_indices]
-        y_true_source = y_true[source_indices]
-        y_true_target = y_true[target_indices]
-
-        # get the source and target loss
-        loss_source = loss.calculate_loss(embedding_source, y_true_source)
-        loss_target = loss.calculate_loss(embedding_target, y_true_target)
-
-        return loss_source, loss_target
 
     def domain_anomaly_score_decision(
         self,
         knn_source,
         knn_target,
+        embedding_train_array,
+        y_train_true,
         embedding_test_array,
-        embedding_train_source,
-        embedding_train_target,
-        y_test_cm,
+        y_test_true,
         percentile,
     ):
         """
         find the domain of a given embedding test array
         """
+        # split the embedding
+        embedding_train_source, embedding_train_target = self.embedding_source_target(
+            embedding_array=embedding_train_array, y_true=y_train_true
+        )
+
         # fit knn models
         knn_source.fit(embedding_train_source)
         knn_target.fit(embedding_train_target)
 
+        # get the threshold for the anomaly decision
+        distance_train_source = knn_source.kneighbors(embedding_train_source)
+        distance_train_target = knn_target.kneighbors(embedding_train_target)
+
+        threshold_source = np.percentile(distance_train_source, percentile)
+        threshold_target = np.percentile(distance_train_target, percentile)
+
         # split y_test to index of original time series and label
-        windows = y_test_cm[:, 0]
-        # print("windows:", windows)
+        windows = y_test_true[:, 0]
 
         # find the cosine distance to source and target
-        distance_source, _ = knn_source.kneighbors(embedding_test_array)
-        distance_source = np.mean(distance_source, axis=1)
+        distance_test_source, _ = knn_source.kneighbors(embedding_test_array)
+        distance_test_source = np.mean(distance_test_source, axis=1)
 
-        distance_target, _ = knn_target.kneighbors(embedding_test_array)
-        distance_target = np.mean(distance_target, axis=1)
+        distance_test_target, _ = knn_target.kneighbors(embedding_test_array)
+        distance_test_target = np.mean(distance_test_target, axis=1)
 
-        distance_concat = np.stack((distance_source, distance_target))
+        distance_test_concat = np.stack((distance_test_source, distance_test_target))
 
-        # get the each time series index from window index. {time series:windows_of_this_timeseries}
+        # get the each time series index from window index. timeseries: [ts1, ts2,...,ts6399] {time series:windows_of_this_timeseries}
         timeseries = np.unique(windows)
-        # print("timeseries:", timeseries)
         ts_to_window_dict = {
             element: np.where(windows == element)[0] for element in timeseries
         }
-        # print("ts_to_window_dict:", ts_to_window_dict)
-
-        # calculate the mean, cov of embedding train source and target
-        mean_source = np.mean(embedding_train_source, axis=0)
-        cov_source = np.cov(embedding_train_source, rowvar=False)
-
-        mean_target = np.mean(embedding_train_target, axis=0)
-        cov_target = np.cov(embedding_train_target, rowvar=False)
-
-        # Add a small regularization term to the diagonal of the covariance matrix to make it invertible
-        regularization_term = 1e-5
-        cov_source += regularization_term * np.eye(cov_source.shape[0])
-        cov_target += regularization_term * np.eye(cov_target.shape[0])
-
-        # Calculate the inverse of the covariance matrix
-        inv_cov_source = np.linalg.inv(cov_source)
-        inv_cov_target = np.linalg.inv(cov_target)
-
-        # get the threshold of the each mahanalobis distance
-        md_source = np.array(
-            [
-                mahalanobis(point, mean_source, inv_cov_source)
-                for point in embedding_train_source
-            ]
-        )
-        md_target = np.array(
-            [
-                mahalanobis(point, mean_target, inv_cov_target)
-                for point in embedding_train_target
-            ]
-        )
-
-        # get the threshold for the anomaly decision
-        threshold_source = np.percentile(md_source, percentile)
-        threshold_target = np.percentile(md_target, percentile)
 
         # get the domain, anomaly score, anomaly decision for each time series (time series in range (0,1399)): source 0, target 1, normal 0, anomaly 1. {time series: domain}, {time series: mahalobis}, {time series: decision}
         domain_dict = {}
@@ -378,45 +368,28 @@ class AnomalyDetection:
 
         for ts, ws in ts_to_window_dict.items():
 
-            # distances of each window in a timeseries
-            distance_concat_windows_this_ts = distance_concat[:, ws]
+            # distances of each window in a single timeseries
+            distance_concat_windows_this_ts = distance_test_concat[:, ws]
+
+            # mean distance of all windows from a sigle timeseries
             distance_concat_windows_this_ts = distance_concat_windows_this_ts.mean(
                 axis=1
             )
 
-            # embedding of each timeseries
-            embedding_ts = embedding_test_array[ws, :]
-
-            # get the domain of this ts
-            argmin_flatten_distance = np.argmin(distance_concat_windows_this_ts)
-            argmin_distance = np.unravel_index(
-                argmin_flatten_distance, distance_concat_windows_this_ts.shape
-            )
-            domain = argmin_distance[0]
+            # get the domain of this ts and anomaly score
+            domain = np.argmin(distance_concat_windows_this_ts)
+            distance = np.min(distance_concat_windows_this_ts)
             domain_dict[ts] = domain
 
             # calculate mahanalobis distance as anomly score and anomaly decision
             if domain == 0:
-                md = np.array(
-                    [
-                        mahalanobis(point, mean_source, inv_cov_source)
-                        for point in embedding_ts
-                    ]
-                )
-                md = np.mean(md)
-                anomaly_decision[ts] = 1 if md > threshold_source else 0
-                anomaly_score[ts] = md
+                threshold = threshold_source
 
             elif domain == 1:
-                md = np.array(
-                    [
-                        mahalanobis(point, mean_target, inv_cov_target)
-                        for point in embedding_ts
-                    ]
-                )
-                md = np.mean(md)
-                anomaly_decision[ts] = 1 if md > threshold_target else 0
-                anomaly_score[ts] = md
+                threshold = threshold_target
+
+            anomaly_decision[ts] = 1 if distance > threshold else 0
+            anomaly_score[ts] = distance
 
         return domain_dict, anomaly_score, anomaly_decision
 
@@ -428,8 +401,8 @@ class AnomalyDetection:
         # get the labels based on given type
         labels_type = self.data_analysis_dict[type]
 
-        # compact y_true_cm y_true = [ts 1: label for ts 1]
-        y_true = {k: v for k, v in y_test_cm}
+        # compact y_true_cm y_true = {ts1:label_ts1, ts2:label_ts2} -> y_true = [ts 1: label of ts 1]
+        y_true = {k: v for k, v, _ in y_test_cm}
         y_true = dict(sorted(y_true.items()))
         y_true = {k: 0 if v in labels_type else 1 for k, v in y_true.items()}
         y_true = np.array(list(y_true.values()))
@@ -648,14 +621,13 @@ class AnomalyDetection:
 
             # metrics init
             loss_train = 0
-            loss_test = 0
 
             # confustion matrix
             y_train_cm = np.empty(shape=(len_train,))
             y_pred_train_cm = np.empty(shape=(len_train,))
-            y_pred_train_logits_cm = np.empty(shape=(len_train, self.num_classes_train))
 
             y_test_cm = np.empty(shape=(len_test, 3))
+            y_pred_test_cm = np.empty(shape=(len_test,))
 
             # embedding array init
             embedding_train_array = np.empty((len_train, emb_size))
@@ -678,16 +650,13 @@ class AnomalyDetection:
                     batch_train * batch_size : batch_train * batch_size + batch_size
                 ] = (embedding_train.cpu().detach().numpy())
 
-                y_pred_train_logits = loss.logits(
-                    embedding=embedding_train, y_true=y_train
-                )
-                y_pred_train_label = y_pred_train_logits.argmax(dim=1)
+                y_pred_train_label = loss.pred_labels(embedding=embedding_train)
 
                 # calculate the loss
                 loss_train_this_batch = loss(embedding_train, y_train)
                 loss_train = loss_train + loss_train_this_batch.item()
 
-                # indexing the y_train true, pred labels and logit
+                # indexing the y_train true, pred labels
                 y_train_cm[
                     batch_train * batch_size : batch_train * batch_size + batch_size
                 ] = y_train.cpu().numpy()
@@ -723,22 +692,55 @@ class AnomalyDetection:
                     embedding_test_array[
                         batch_test * batch_size : batch_test * batch_size + batch_size
                     ] = embedding_test.cpu().numpy()
+                    y_pred_test_label = loss.pred_labels(embedding=embedding_test)
 
-                    # elim the labels
-                    # source_indices, target_indices = self.get_source_target_indices(
-                    #     y_true=y_test_att, data_type="test", elim=True
-                    # )
-                    # embedding_test =
-                    # y_pred_test_logit = loss.logits(
-                    #     embedding=embedding_test, y_true=y_test_att
-                    # )
-                    # all y test
+                    # indexing the y_test true, pred labels
                     y_test_cm[
                         batch_test * batch_size : batch_test * batch_size + batch_size
                     ] = y_test.cpu().numpy()
-
+                    y_pred_test_cm[
+                        batch_test * batch_size : batch_test * batch_size + batch_size
+                    ] = y_pred_test_label.cpu().numpy()
                     # if batch_test == 200:
                     #     break
+
+            print("loss train")
+            # loss train, loss train source, loss train target classification
+            loss_train_source, loss_train_target = self.loss_source_target(
+                embedding_array=embedding_train_array,
+                y_true=y_train_cm,
+                loss=loss,
+                data_type="train",
+                classification=False,
+            )
+
+            loss_train = loss_train / len(train_loader)
+
+            print("loss test")
+            # loss test, loss test source loss test target classification
+            loss_test_source, loss_test_target = self.loss_source_target(
+                embedding_array=embedding_test_array,
+                y_true=y_test_cm,
+                loss=loss,
+                data_type="test",
+                classification=True,
+            )
+
+            # accuracy train, train soure adnd train target for classification
+            accuracy_train_source, accuracy_train_target = self.accuracy_source_target(
+                y_pred_label=y_pred_train_cm,
+                y_true=y_train_cm,
+            )
+
+            accuracy_train = accuracy_score(y_pred=y_pred_train_cm, y_true=y_train_cm)
+
+            # accuracy test source, test target for classification
+            accuracy_test_source, accuracy_test_target = self.accuracy_source_target(
+                y_pred_label=y_pred_test_cm,
+                y_true=y_test_cm,
+                data_type="test",
+                classification=True,
+            )
 
             # fit embedding to knn models
             embedding_train_source, embedding_train_target = (
@@ -752,10 +754,10 @@ class AnomalyDetection:
                 self.domain_anomaly_score_decision(
                     knn_source=knn_source,
                     knn_target=knn_target,
+                    embedding_train_array=embedding_train_array,
                     embedding_test_array=embedding_test_array,
-                    embedding_train_source=embedding_train_source,
-                    embedding_train_target=embedding_train_target,
-                    y_test_cm=y_test_cm,
+                    y_train_true=y_train_cm,
+                    y_test_true=y_test_cm,
                     percentile=percentile,
                 )
             )
@@ -783,31 +785,12 @@ class AnomalyDetection:
             )
             cm_test_fig = self.plot_confusion_matrix(cm=cm_test, name="test")
 
-            # accuracy soure target and train
-            accuracy_train_source, accuracy_train_target = self.accuracy_source_target(
-                y_pred_label=y_pred_train_cm,
-                y_true=y_train_cm,
-            )
-
-            accuracy_train = accuracy_score(y_pred=y_pred_train_cm, y_true=y_train_cm)
-
             # f1 score
             f1_train = f1_score(
                 y_pred=y_pred_train_cm,
                 y_true=y_train_cm,
                 average="weighted",
             )
-
-            # loss
-            loss_train_source, loss_train_target = self.loss_source_target(
-                embedding_array=embedding_train_array,
-                y_true=y_train_cm,
-                loss=loss,
-                data_type="train",
-                elim=False,
-            )
-
-            loss_train = loss_train / len(train_loader)
 
             print("epoch {}".format(ep))
             print(
@@ -831,9 +814,13 @@ class AnomalyDetection:
                 "loss_train": loss_train,
                 "loss_train_source": loss_train_source,
                 "loss_train_target": loss_train_target,
+                "loss_test_source": loss_test_source,
+                "loss_test_target": loss_test_target,
                 "accuracy_train": accuracy_train,
                 "accuracy_train_source": accuracy_train_source,
                 "accuracy_train_target": accuracy_train_target,
+                "accuracy_test_source": accuracy_test_source,
+                "accuracy_test_target": accuracy_test_target,
                 "f1_train": f1_train,
                 "accuracy_domain_test": accuracy_domain,
                 "accuracy_decision_test": accuracy_decision,
