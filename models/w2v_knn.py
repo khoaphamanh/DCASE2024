@@ -81,6 +81,7 @@ class AnomalyDetection:
         self.unique_labels_test = self.unique_labels_dict["test"]
         self.num_classes_train = len(self.unique_labels_train)
         self.data_analysis_dict = data_preprocessing.data_analysis_dict()
+        self.elim_labels = data_preprocessing.elim_labels()
 
         # time series information
         self.fs = data_preprocessing.fs
@@ -182,57 +183,90 @@ class AnomalyDetection:
 
         return fig
 
-    def get_source_target_indices(self, y_true):
+    def get_source_target_indices(self, y_true, data_type="train", elim=False):
         """
-        get the source and target indices given y_true
+        get the source and target indices given y_true, elim for the case that label
         """
+        # check data type
+        if data_type == "train":
+            source = "train_source"
+            target = "train_target"
+        elif data_type == "test" and elim == False:
+            source = "test_source"
+            target = "test_target"
+        elif data_type == "test" and elim == True:
+            source = "train_source"
+            target = "train_target"
+
         # get the indices of the source and target in y_true
-        source_labels = self.data_analysis_dict["train_source"]
-        target_labels = self.data_analysis_dict["train_target"]
+        source_labels = self.data_analysis_dict[source]
+        target_labels = self.data_analysis_dict[target]
+
+        # eliminate the labels, y_true for this case should be y_test_att
+        if elim:
+            elim_labels = self.elim_labels
+            source_labels = [i for i in source_labels if i not in elim_labels]
+            target_labels = [i for i in target_labels if i not in elim_labels]
+
         source_indices = np.where(np.isin(y_true, source_labels))[0]
+        # print("source_indices shape:", source_indices)
         target_indices = np.where(np.isin(y_true, target_labels))[0]
+
+        # print("target_indices shape:", target_indices)
 
         return source_indices, target_indices
 
-    def get_normal_anomaly_indices(self, y_true):
-        """
-        get the normal and anomaly indices given y_true
-        """
-        # get the indices of the source and target in y_true
-        normal_labels = self.data_analysis_dict["test_normal"]
-        anomaly_labels = self.data_analysis_dict["test_anomaly"]
-        normal_indices = np.where(np.isin(y_true, normal_labels))[0]
-        anomaly_indices = np.where(np.isin(y_true, anomaly_labels))[0]
+    # def get_normal_anomaly_indices(self, y_true):
+    #     """
+    #     get the normal and anomaly indices given y_true
+    #     """
+    #     # get the indices of the source and target in y_true
+    #     normal_labels = self.data_analysis_dict["test_normal"]
+    #     anomaly_labels = self.data_analysis_dict["test_anomaly"]
+    #     normal_indices = np.where(np.isin(y_true, normal_labels))[0]
+    #     # print("normal_indices len:", len(normal_indices))
+    #     anomaly_indices = np.where(np.isin(y_true, anomaly_labels))[0]
+    #     # print("anomaly_indices len:", len(anomaly_indices))
 
-        return normal_indices, anomaly_indices
+    #     return normal_indices, anomaly_indices
 
-    def embedding_source_target(self, embedding_train_array, y_true):
+    def embedding_source_target(
+        self, embedding_array, y_true, data_type="train", elim=False
+    ):
         """
         split embedding source and target given embedding array and y_true array
         """
         # get the indices of the source and target in y_true
-        source_indices, target_indices = self.get_source_target_indices(y_true=y_true)
+        source_indices, target_indices = self.get_source_target_indices(
+            y_true=y_true, data_type=data_type, elim=elim
+        )
 
         # split the embedding
-        embedding_source = embedding_train_array[source_indices]
-        embedding_target = embedding_train_array[target_indices]
+        embedding_source = embedding_array[source_indices]
+        # print("embedding_source:", embedding_source)
+        embedding_target = embedding_array[target_indices]
+        # print("embedding_target:", embedding_target)
 
         return embedding_source, embedding_target
 
-    def accuracy_source_target(self, y_pred_label, y_true):
+    def accuracy_source_target(
+        self, y_pred_label, y_true, data_type="train", elim=False
+    ):
         """
         calculate the accuracy source and target in train data given y_true and y_pred_label
         """
         # get the indices of the source and target in y_true
-        source_indices, target_indices = self.get_source_target_indices(y_true=y_true)
+        source_indices, target_indices = self.get_source_target_indices(
+            y_true=y_true, data_type=data_type, elim=elim
+        )
 
         # get the y_true and y_pred of source and targets
         y_pred_source = y_pred_label[source_indices]
         y_pred_target = y_pred_label[target_indices]
-
         y_true_source = y_true[source_indices]
         y_true_target = y_true[target_indices]
 
+        # get the accuracy source and target
         accuracy_train_source_this_batch = accuracy_score(
             y_pred=y_pred_source, y_true=y_true_source
         )
@@ -241,6 +275,29 @@ class AnomalyDetection:
         )
 
         return accuracy_train_source_this_batch, accuracy_train_target_this_batch
+
+    def loss_source_target(
+        self, embedding_array, y_true, loss, data_type="train", elim=False
+    ):
+        """
+        calculate the loss source and target
+        """
+        # get the source and target index based on given y_true
+        source_indices, target_indices = self.get_source_target_indices(
+            y_true=y_true, data_type=data_type, elim=elim
+        )
+
+        # get the y_true and y_pred of source and targets
+        embedding_source = embedding_array[source_indices]
+        embedding_target = embedding_array[target_indices]
+        y_true_source = y_true[source_indices]
+        y_true_target = y_true[target_indices]
+
+        # get the source and target loss
+        loss_source = loss.calculate_loss(embedding_source, y_true_source)
+        loss_target = loss.calculate_loss(embedding_target, y_true_target)
+
+        return loss_source, loss_target
 
     def domain_anomaly_score_decision(
         self,
@@ -261,6 +318,7 @@ class AnomalyDetection:
 
         # split y_test to index of original time series and label
         windows = y_test_cm[:, 0]
+        # print("windows:", windows)
 
         # find the cosine distance to source and target
         distance_source, _ = knn_source.kneighbors(embedding_test_array)
@@ -273,9 +331,11 @@ class AnomalyDetection:
 
         # get the each time series index from window index. {time series:windows_of_this_timeseries}
         timeseries = np.unique(windows)
+        # print("timeseries:", timeseries)
         ts_to_window_dict = {
             element: np.where(windows == element)[0] for element in timeseries
         }
+        # print("ts_to_window_dict:", ts_to_window_dict)
 
         # calculate the mean, cov of embedding train source and target
         mean_source = np.mean(embedding_train_source, axis=0)
@@ -320,9 +380,12 @@ class AnomalyDetection:
 
             # distances of each window in a timeseries
             distance_concat_windows_this_ts = distance_concat[:, ws]
+            distance_concat_windows_this_ts = distance_concat_windows_this_ts.mean(
+                axis=1
+            )
 
             # embedding of each timeseries
-            embedding_ts = embedding_test_array[:, ws]
+            embedding_ts = embedding_test_array[ws, :]
 
             # get the domain of this ts
             argmin_flatten_distance = np.argmin(distance_concat_windows_this_ts)
@@ -340,8 +403,9 @@ class AnomalyDetection:
                         for point in embedding_ts
                     ]
                 )
-                md = np.max(md)
+                md = np.mean(md)
                 anomaly_decision[ts] = 1 if md > threshold_source else 0
+                anomaly_score[ts] = md
 
             elif domain == 1:
                 md = np.array(
@@ -350,10 +414,27 @@ class AnomalyDetection:
                         for point in embedding_ts
                     ]
                 )
-                md = np.max(md)
+                md = np.mean(md)
                 anomaly_decision[ts] = 1 if md > threshold_target else 0
+                anomaly_score[ts] = md
 
         return domain_dict, anomaly_score, anomaly_decision
+
+    def compact_y_test(self, y_test_cm, type: None):
+        """
+        compact y_test_cm to be shorter based on train source, train target, test anomaly, test normal
+        y_true = [label of ts1, label of ts2,...]
+        """
+        # get the labels based on given type
+        labels_type = self.data_analysis_dict[type]
+
+        # compact y_true_cm y_true = [ts 1: label for ts 1]
+        y_true = {k: v for k, v in y_test_cm}
+        y_true = dict(sorted(y_true.items()))
+        y_true = {k: 0 if v in labels_type else 1 for k, v in y_true.items()}
+        y_true = np.array(list(y_true.values()))
+
+        return y_true
 
     def accuracy_domain_test(self, domain_dict, y_test_cm):
         """
@@ -362,11 +443,8 @@ class AnomalyDetection:
         # domain prediction of each ts
         domain_pred = np.array(list(domain_dict.values()))
 
-        # y_true
-        test_source_labels = self.data_analysis_dict["test_source"]
-        y_true = {k: v for k, v in y_test_cm}
-        y_true = dict(sorted(y_true.items()))
-        y_true = {k: 0 if v in test_source_labels else 1 for k, v in y_true.items()}
+        # get y_true
+        y_true = self.compact_y_test(y_test_cm=y_test_cm, type="test_source")
 
         # calculate accuracy domain
         accuracy_domain = accuracy_score(y_pred=domain_pred, y_true=y_true)
@@ -381,10 +459,7 @@ class AnomalyDetection:
         y_pred = np.array(list(anomaly_decision.values()))
 
         # y_true
-        test_normal_labels = self.data_analysis_dict["test_normal"]
-        y_true = {k: v for k, v in y_test_cm}
-        y_true = dict(sorted(y_true.items()))
-        y_true = {k: 0 if v in test_normal_labels else 1 for k, v in y_true.items()}
+        y_true = self.compact_y_test(y_test_cm=y_test_cm, type="test_normal")
 
         # calculate accuracy decision
         accuracy_decision = accuracy_score(y_pred=y_pred, y_true=y_true)
@@ -396,13 +471,12 @@ class AnomalyDetection:
         calculate auroc given anomaly scire and y_test
         """
         # y score
+        # print("anomaly_score", anomaly_score)
         y_score = np.array(list(anomaly_score.values()))
+        # print("y_score:", y_score)
 
         # y_true
-        test_normal_labels = self.data_analysis_dict["test_normal"]
-        y_true = {k: v for k, v in y_test_cm}
-        y_true = dict(sorted(y_true.items()))
-        y_true = {k: 0 if v in test_normal_labels else 1 for k, v in y_true.items()}
+        y_true = self.compact_y_test(y_test_cm=y_test_cm, type="test_normal")
 
         # roc auc
         fpr, tpr, thresholds = roc_curve(y_score=y_score, y_true=y_true)
@@ -435,6 +509,18 @@ class AnomalyDetection:
         plt.legend(loc="lower right")
 
         return fig
+
+    def confusion_matrix_test(self, anomaly_decision, y_test_cm):
+        """
+        confusion matrix given anomaly_decision and y_test_cm
+        """
+        # y_pred based on anomaly score
+        y_pred = np.array(list(anomaly_decision.values()))
+
+        # y_true
+        y_true = self.compact_y_test(y_test_cm=y_test_cm, type="test_normal")
+
+        return confusion_matrix(y_pred=y_pred, y_true=y_true)
 
     def train_test_loop(
         self,
@@ -473,6 +559,8 @@ class AnomalyDetection:
             window_size = self.fs * 2
         if hop_size == None:
             hop_size = self.fs
+        if distance == None:
+            distance = "cosine"
 
         hyperparameters = {
             "batch_size": batch_size,
@@ -484,7 +572,11 @@ class AnomalyDetection:
             "loss_name": loss_name,
             "optimizer_name": optimizer_name,
             "model_nane": model_name,
+            "percentile": percentile,
+            "distance": distance,
+            "k": k,
         }
+
         if loss_name in ["arcface", "adacos"]:
             hyperparameters["classifier_head"] = classifier_head
             if loss_name == "arcface":
@@ -556,26 +648,25 @@ class AnomalyDetection:
 
             # metrics init
             loss_train = 0
-            accuracy_train = 0
-            accuracy_train_source = 0
-            accuracy_train_target = 0
-            f1_train = 0
-
-            accuracy_test = 0
+            loss_test = 0
 
             # confustion matrix
             y_train_cm = np.empty(shape=(len_train,))
             y_pred_train_cm = np.empty(shape=(len_train,))
+            y_pred_train_logits_cm = np.empty(shape=(len_train, self.num_classes_train))
 
-            y_test_cm = np.empty(shape=(2, len_test))
+            y_test_cm = np.empty(shape=(len_test, 3))
 
             # embedding array init
-            embedding_train_array = np.empty_like(shape=(len_train, emb_size))
-            embedding_test_array = np.empty_like(shape=(len_test, emb_size))
+            embedding_train_array = np.empty((len_train, emb_size))
+            embedding_test_array = np.empty((len_test, emb_size))
 
             # training mode
             model.train()
+            loss.train()
             for batch_train, (X_train, y_train) in enumerate(train_loader):
+
+                print("batch_train", batch_train)
 
                 # to device
                 X_train = X_train.to(self.device)
@@ -585,66 +676,47 @@ class AnomalyDetection:
                 embedding_train = model(X_train)
                 embedding_train_array[
                     batch_train * batch_size : batch_train * batch_size + batch_size
-                ] = embedding_train.cpu().numpy()
+                ] = (embedding_train.cpu().detach().numpy())
 
-                y_pred_train_logit = loss.logits(
+                y_pred_train_logits = loss.logits(
                     embedding=embedding_train, y_true=y_train
                 )
-                y_pred_train_label = y_pred_train_logit.argmax(dim=1)
+                y_pred_train_label = y_pred_train_logits.argmax(dim=1)
 
-                # calculate the loss, accuracy, f1 score and confusion matrix
-                # loss
+                # calculate the loss
                 loss_train_this_batch = loss(embedding_train, y_train)
                 loss_train = loss_train + loss_train_this_batch.item()
 
-                # accuracy train
-                accuracy_train_this_batch = accuracy_score(
-                    y_pred=y_pred_train_label.cpu().numpy(),
-                    y_true=y_train.cpu().numpy(),
-                )
-                accuracy_train = accuracy_train + accuracy_train_this_batch
-
-                accuracy_train_source_this_batch, accuracy_train_target_this_batch = (
-                    self.accuracy_source_target(
-                        y_pred_label=y_pred_train_label.cpu().numpy(),
-                        y_true=y_train.cpu().numpy(),
-                    )
-                )
-                accuracy_train_source = (
-                    accuracy_train_source + accuracy_train_source_this_batch
-                )
-                accuracy_train_target = (
-                    accuracy_train_target + accuracy_train_target_this_batch
-                )
-
-                # f1 train
-                f1_train_this_batch = f1_score(
-                    y_pred=y_pred_train_label.cpu().numpy(),
-                    y_true=y_train.cpu().numpy(),
-                    average="weighted",
-                )
-                f1_train = f1_train + f1_train_this_batch
-
-                # confusion matrix train
+                # indexing the y_train true, pred labels and logit
                 y_train_cm[
                     batch_train * batch_size : batch_train * batch_size + batch_size
                 ] = y_train.cpu().numpy()
                 y_pred_train_cm[
                     batch_train * batch_size : batch_train * batch_size + batch_size
                 ] = y_pred_train_label.cpu().numpy()
+                # y_pred_train_logits_cm[
+                #     batch_train * batch_size : batch_train * batch_size + batch_size
+                # ] = y_pred_train_logits.cpu().numpy()
 
                 # gradient decent, backpropagation and update parameters
                 optimizer.zero_grad()
                 loss_train_this_batch.backward()
                 optimizer.step()
 
+                # if batch_train == 200:
+                #     break
+
             # evaluation mode
             model.eval()
+            loss.eval()
             with torch.inference_mode():
                 for batch_test, (X_test, y_test) in enumerate(test_loader):
+                    print("batch_test", batch_test)
+                    # split y_test to y_test_na: labels with normal/anomaly and y_test_att: labels of attribute without anomaly, normal
 
                     # to device
                     X_test = X_test.to(self.device)
+                    # y_test_att = y_test_att.to(self.device)
 
                     # forward pass
                     embedding_test = model(X_test)
@@ -652,15 +724,26 @@ class AnomalyDetection:
                         batch_test * batch_size : batch_test * batch_size + batch_size
                     ] = embedding_test.cpu().numpy()
 
+                    # elim the labels
+                    # source_indices, target_indices = self.get_source_target_indices(
+                    #     y_true=y_test_att, data_type="test", elim=True
+                    # )
+                    # embedding_test =
+                    # y_pred_test_logit = loss.logits(
+                    #     embedding=embedding_test, y_true=y_test_att
+                    # )
                     # all y test
                     y_test_cm[
                         batch_test * batch_size : batch_test * batch_size + batch_size
                     ] = y_test.cpu().numpy()
 
+                    # if batch_test == 200:
+                    #     break
+
             # fit embedding to knn models
             embedding_train_source, embedding_train_target = (
                 self.embedding_source_target(
-                    embedding_train_array=embedding_train_array, y_true=y_train_cm
+                    embedding_array=embedding_train_array, y_true=y_train_cm
                 )
             )
 
@@ -689,20 +772,42 @@ class AnomalyDetection:
 
             # roc_auc
             roc_auc, roc_auc_fig = self.aucroc_anomaly_score(
-                anomaly_score=accuracy_score, y_test_cm=y_test
+                anomaly_score=anomaly_score, y_test_cm=y_test_cm
             )
 
-            # print out the metrics
-            loss_train = loss_train / len(train_loader)
-            accuracy_train = accuracy_train / len(train_loader)
-            accuracy_train_target = accuracy_train_target / len(train_loader)
-            accuracy_train_target = accuracy_train_target / len(train_loader)
-            f1_train = f1_train / len(train_loader)
-
-            accuracy_test = accuracy_test / len(test_loader)
-            f1_test = f1_test / len(test_loader)
-
+            # confusion matrix
             cm_train = confusion_matrix(y_true=y_train_cm, y_pred=y_pred_train_cm)
+            cm_train_fig = self.plot_confusion_matrix(cm=cm_train, name="train")
+            cm_test = self.confusion_matrix_test(
+                anomaly_decision=anomaly_decision, y_test_cm=y_test_cm
+            )
+            cm_test_fig = self.plot_confusion_matrix(cm=cm_test, name="test")
+
+            # accuracy soure target and train
+            accuracy_train_source, accuracy_train_target = self.accuracy_source_target(
+                y_pred_label=y_pred_train_cm,
+                y_true=y_train_cm,
+            )
+
+            accuracy_train = accuracy_score(y_pred=y_pred_train_cm, y_true=y_train_cm)
+
+            # f1 score
+            f1_train = f1_score(
+                y_pred=y_pred_train_cm,
+                y_true=y_train_cm,
+                average="weighted",
+            )
+
+            # loss
+            loss_train_source, loss_train_target = self.loss_source_target(
+                embedding_array=embedding_train_array,
+                y_true=y_train_cm,
+                loss=loss,
+                data_type="train",
+                elim=False,
+            )
+
+            loss_train = loss_train / len(train_loader)
 
             print("epoch {}".format(ep))
             print(
@@ -724,24 +829,29 @@ class AnomalyDetection:
             # log the metrics in neptune
             metrics = {
                 "loss_train": loss_train,
+                "loss_train_source": loss_train_source,
+                "loss_train_target": loss_train_target,
                 "accuracy_train": accuracy_train,
                 "accuracy_train_source": accuracy_train_source,
                 "accuracy_train_target": accuracy_train_target,
                 "f1_train": f1_train,
-                "accuracy_test": accuracy_test,
-                "f1_test": f1_test,
-                "accuracy domain": accuracy_domain,
-                "accuracy decision": accuracy_decision,
-                "roc auc": roc_auc,
+                "accuracy_domain_test": accuracy_domain,
+                "accuracy_decision_test": accuracy_decision,
+                "roc_auc_test": roc_auc,
             }
 
             run["metrics"].append(metrics, step=ep)
 
-            run["metrics/roc_auc"].append(roc_auc_fig, step=ep)
-            plt.close()
-            cm_train_fig = self.plot_confusion_matrix(cm=cm_train, name="train")
-            plt.close()
             run["metrics/confusion_matrix_train"].append(cm_train_fig, step=ep)
+            plt.close()
+
+            run["metrics/confusion_matrix_test"].append(cm_test_fig, step=ep)
+            plt.close()
+
+            run["metrics/roc_auc_plot"].append(roc_auc_fig, step=ep)
+            plt.close()
+
+            # break
 
         # running time
         run["runing_time"] = run["sys/running_time"]
