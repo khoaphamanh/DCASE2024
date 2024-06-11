@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+import numpy as np
 
 
 # Arcface Loss
@@ -70,6 +71,22 @@ class ArcFaceLoss(nn.Module):
         cosine_phi = torch.cos(phi)
         return cosine_phi
 
+    def calculate_loss(self, embedding, y_true):
+        """
+        calculate the loss in evaluation mode (without grad)
+        """
+        # check if array then conver to tensor
+        if isinstance(embedding, np.ndarray):
+            embedding = torch.tensor(embedding).to(self.device).float()
+        if isinstance(y_true, np.ndarray):
+            y_true = torch.tensor(y_true, dtype=torch.int64).to(self.device)
+
+        # calculate the loss
+        with torch.no_grad():
+            loss = self.forward(embedding=embedding, y_true=y_true)
+
+        return loss
+
 
 # Adacos Loss
 class AdaCosLoss(nn.Module):
@@ -102,6 +119,8 @@ class AdaCosLoss(nn.Module):
         onehot = self.onehot_true_label(y_true)  # size (B, n_classes)
 
         # new scale
+        print("self.training", self.training)
+
         if self.training:
             with torch.no_grad():
                 # B_avg
@@ -158,3 +177,19 @@ class AdaCosLoss(nn.Module):
         onehot = torch.zeros(batch_size, self.num_classes).to(self.device)
         onehot.scatter_(1, y_true.unsqueeze(-1), 1)
         return onehot
+
+    def calculate_loss(self, embedding, y_true):
+        """
+        calculate the loss in evaluation mode (without grad)
+        """
+        # check if array then conver to tensor
+        if isinstance(embedding, np.ndarray):
+            embedding = torch.tensor(embedding).to(self.device).float()
+        if isinstance(y_true, np.ndarray):
+            y_true = torch.tensor(y_true, dtype=torch.int64).to(self.device)
+
+        # calculate the loss
+        with torch.no_grad():
+            loss = self.forward(embedding=embedding, y_true=y_true)
+
+        return loss
