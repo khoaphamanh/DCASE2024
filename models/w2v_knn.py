@@ -190,13 +190,8 @@ class AnomalyDetection:
             source = "train_source"
             target = "train_target"
 
-            source_labels = self.labels_analysis_dict[source]
-            target_labels = self.labels_analysis_dict[target]
-
-            source_indices = np.where(np.isin(y_true, source_labels))[0]
-            target_indices = np.where(np.isin(y_true, target_labels))[0]
-
-            return source_indices, target_indices
+            # get the indices of train source and train target
+            domain = [source, target]
 
         # this case use for check test loss/accuracy in classification task
         elif test_classification == True:
@@ -206,100 +201,46 @@ class AnomalyDetection:
             target_normal = "test_target_normal"
             target_anomaly = "test_target_anomaly"
 
-            source_normal_labels = self.labels_analysis_dict[source_normal]
-            source_anomaly_labels = self.labels_analysis_dict[source_anomaly]
-            target_normal_labels = self.labels_analysis_dict[target_normal]
-            target_anomaly_labels = self.labels_analysis_dict[target_anomaly]
+            # get the indices of test source target normal anomaly
+            domain = [source_normal, source_anomaly, target_normal, target_anomaly]
 
-            source_normal_indices = np.where(np.isin(y_true, source_normal_labels))[0]
-            source_anomaly_indices = np.where(np.isin(y_true, source_anomaly_labels))[0]
-            target_normal_indices = np.where(np.isin(y_true, target_normal_labels))[0]
-            target_anomaly_indices = np.where(np.isin(y_true, target_anomaly_labels))[0]
+        indices = []
+        for d in domain:
+            domain_labels = self.labels_analysis_dict[d]
+            domain_indices = np.where(np.isin(y_true, domain_labels))[0]
+            indices.append(domain_indices)
 
-            return (
-                source_normal_indices,
-                source_anomaly_indices,
-                target_normal_indices,
-                target_anomaly_indices,
-            )
+        # return source indices, target indices for test classification False
+        # return source_normal_indices, source_anomaly_indices, target_normal_indices, target_anomaly_indices for test classification True
+        return indices
 
     def accuracy_source_target(self, y_pred, y_true, test_classification=False):
         """
         calculate the accuracy source and target in train data given y_true and y_pred_label
         """
-        # check the test classification get the indices of the source and target in y_true
-        if test_classification == False:
 
-            # this case for training classification
-            source_indices, target_indices = self.get_source_target_indices(
-                y_true=y_true,
-                test_classification=test_classification,
-            )
-            # get the y_true and y_pred of source and targets
-            y_pred_source = y_pred[source_indices]
-            y_pred_target = y_pred[target_indices]
-            y_true_source = y_true[source_indices]
-            y_true_target = y_true[target_indices]
-
-            # get the accuracy source and target
-            accuracy_train_source_this_batch = accuracy_score(
-                y_pred=y_pred_source, y_true=y_true_source
-            )
-            accuracy_train_target_this_batch = accuracy_score(
-                y_pred=y_pred_target, y_true=y_true_target
-            )
-
-            return accuracy_train_source_this_batch, accuracy_train_target_this_batch
+        # indices: source_indices, target_indices if classification False
+        # indices:source_normal_indices, source_anomaly_indices, target_normal_indices, target_anomaly_indices for test classification True
+        indices = self.get_source_target_indices(
+            y_true=y_true,
+            test_classification=test_classification,
+        )
 
         # this case
-        elif test_classification == True:
+        if test_classification == True:
+            y_true = y_true[:, 2]
 
-            # get indices source target normal anomaly
-            (
-                source_normal_indices,
-                source_anomaly_indices,
-                target_normal_indices,
-                target_anomaly_indices,
-            ) = self.get_source_target_indices(
-                y_true=y_true,
-                test_classification=test_classification,
-            )
+        # get the accuracy train source and target
+        accuracy = []
+        for idx in indices:
+            y_pred_domain = y_pred[idx]
+            y_true_domain = y_true[idx]
+            acc = accuracy_score(y_pred=y_pred_domain, y_true=y_true_domain)
+            accuracy.append(acc)
 
-            # y true as without normal anomaly
-            y_true = y_true[:, 1]
-
-            # y_true based on indices
-            y_true_source_normal = y_true[source_normal_indices]
-            y_true_source_anomaly = y_true[source_anomaly_indices]
-            y_true_target_normal = y_true[target_normal_indices]
-            y_true_target_anomaly = y_true[target_anomaly_indices]
-
-            # y_pred based on indices
-            y_pred_source_normal = y_pred[source_normal_indices]
-            y_pred_source_anomaly = y_pred[source_anomaly_indices]
-            y_pred_target_normal = y_pred[target_normal_indices]
-            y_pred_target_anomaly = y_pred[target_anomaly_indices]
-
-            # calculate the accuracy
-            accuracy_source_normal = accuracy_score(
-                y_true=y_true_source_normal, y_pred=y_pred_source_normal
-            )
-            accuracy_source_anomaly = accuracy_score(
-                y_true=y_true_source_anomaly, y_pred=y_pred_source_anomaly
-            )
-            accuracy_target_normal = accuracy_score(
-                y_true=y_true_target_normal, y_pred=y_pred_target_normal
-            )
-            accuracy_target_anomaly = accuracy_score(
-                y_true=y_true_target_anomaly, y_pred=y_pred_target_anomaly
-            )
-
-            return (
-                accuracy_source_normal,
-                accuracy_source_anomaly,
-                accuracy_target_normal,
-                accuracy_target_anomaly,
-            )
+        # return accuracy_train_source, accuracy_train_target if test classification False
+        # return accuracy_test_source_normal, accuracy_test_source_anomaly, accuracy_test_target_normal, accuracy_test_target_anomaly if test classification True
+        return accuracy
 
     def loss_source_target(
         self,
@@ -311,60 +252,35 @@ class AnomalyDetection:
         """
         calculate the loss source and target
         """
-        # get the source and target index based on given y_true
-        source_indices, target_indices = self.get_source_target_indices(
+        # indices: source_indices, target_indices if classification False
+        # indices:source_normal_indices, source_anomaly_indices, target_normal_indices, target_anomaly_indices for test classification True
+        indices = self.get_source_target_indices(
             y_true=y_true, test_classification=test_classification
         )
 
-        # check test classification
-        if test_classification:
+        if test_classification == True:
             y_true = y_true[:, 2]
 
-        # get the y_true and y_pred of source and targets
-        embedding_source = embedding_array[source_indices]
-        embedding_target = embedding_array[target_indices]
-        y_true_source = y_true[source_indices]
-        y_true_target = y_true[target_indices]
+        losses = []
+        for idx in indices:
+            embedding_domain = embedding_array[idx]
+            y_true_domain = y_true[idx]
+            loss_domain = loss.calculate_loss(embedding_domain, y_true_domain)
+            losses.append(loss_domain)
 
-        # get the source and target loss
-        loss_source = loss.calculate_loss(embedding_source, y_true_source)
-        loss_target = loss.calculate_loss(embedding_target, y_true_target)
-
-        return loss_source, loss_target
-
-    # def get_normal_anomaly_indices(self, y_true):
-    #     """
-    #     get the normal and anomaly indices given y_true
-    #     """
-    #     # split y true to get the labels with normal and anomaly
-    #     y_true = y_true[:, 1]
-
-    #     # get the indices of the source and target in y_true
-    #     source_labels = self.data_labels_analysis_dict["test_source"]
-    #     target_labels = self.data_labels_analysis_dict["test_target"]
-    #     normal_labels = self.data_labels_analysis_dict["test_normal"]
-    #     anomaly_labels = self.data_labels_analysis_dict["test_anomaly"]
-
-    #     # concat the source normal, source anomaly, target normal, target anomaly
-    #     source_normal_labels = np.concatenate((source_labels, normal_labels))
-    #     source_anomaly_labels = np.concatenate((source_labels, normal_labels))
-
-    #     normal_indices = np.where(np.isin(y_true, normal_labels))[0]
-    #     # print("normal_indices len:", len(normal_indices))
-    #     anomaly_indices = np.where(np.isin(y_true, anomaly_labels))[0]
-    #     # print("anomaly_indices len:", len(anomaly_indices))
-
-    #     return normal_indices, anomaly_indices
+        # return loss_train_source, loss_train_target if test classification False
+        # return loss_test_source_normal, loss_test_source_anomaly, loss_test_target_normal, loss_test_target_anomaly if test classification True
+        return losses
 
     def embedding_source_target(
-        self, embedding_array, y_true, data_type="train", test_classification=False
+        self, embedding_array, y_true, test_classification=False
     ):
         """
         split embedding source and target given embedding array and y_true array
         """
         # get the indices of the source and target in y_true
         source_indices, target_indices = self.get_source_target_indices(
-            y_true=y_true, data_type=data_type, test_classification=test_classification
+            y_true=y_true, test_classification=test_classification
         )
 
         # split the embedding
@@ -557,14 +473,13 @@ class AnomalyDetection:
         if test_classification == True:
 
             # get the indices of the source and target in y_true
-            source_indices, target_indices = self.get_source_target_indices(
+            indices = self.get_source_target_indices(
                 y_true=y_true_test,
-                data_type="test",
                 test_classification=test_classification,
             )
             y_true_test = y_true_test[:, 2]
 
-            source_target_indices = np.concatenate((source_indices, target_indices))
+            source_target_indices = np.concatenate(indices)
             y_pred = y_pred_test_labels[source_target_indices]
             y_true = y_true_test[source_target_indices]
 
@@ -803,35 +718,41 @@ class AnomalyDetection:
                 embedding_array=embedding_train_array,
                 y_true=y_train_cm,
                 loss=loss,
-                data_type="train",
                 test_classification=False,
             )
 
             loss_train = loss_train / len(train_loader)
 
             print("loss test")
-            # loss test, loss test source loss test target classification
-            loss_test_source, loss_test_target = self.loss_source_target(
+            # loss_test_source_normal, loss_test_source_anomaly, loss_test_target_normal, loss_test_target_anomaly
+            (
+                loss_test_source_normal,
+                loss_test_source_anomaly,
+                loss_test_target_normal,
+                loss_test_target_anomaly,
+            ) = self.loss_source_target(
                 embedding_array=embedding_test_array,
                 y_true=y_test_cm,
                 loss=loss,
-                data_type="test",
                 test_classification=True,
             )
 
             # accuracy train, train soure adnd train target for classification
             accuracy_train_source, accuracy_train_target = self.accuracy_source_target(
-                y_pred=y_pred_train_cm,
-                y_true=y_train_cm,
+                y_pred=y_pred_train_cm, y_true=y_train_cm, test_classification=False
             )
 
             accuracy_train = accuracy_score(y_pred=y_pred_train_cm, y_true=y_train_cm)
 
-            # accuracy test source, test target for classification
-            accuracy_test_source, accuracy_test_target = self.accuracy_source_target(
+            # accuracy_test_source_normal, accuracy_test_source_anomaly, accuracy_test_target_normal, accuracy_test_target_anomaly
+            (
+                accuracy_test_source_normal,
+                accuracy_test_source_anomaly,
+                accuracy_test_target_normal,
+                accuracy_test_target_anomaly,
+            ) = self.accuracy_source_target(
                 y_pred=y_pred_test_cm,
                 y_true=y_test_cm,
-                data_type="test",
                 test_classification=True,
             )
 
@@ -909,9 +830,16 @@ class AnomalyDetection:
             )
 
             print("epoch {}".format(ep))
+
             print(
                 "loss train = {:.4f}, accuracy train = {:.4f}, f1 train = {:.4f}".format(
                     loss_train, accuracy_train, f1_train
+                )
+            )
+
+            print(
+                "loss train source = {:.4f}, loss train target = {:.4f}".format(
+                    loss_train_source, loss_train_target
                 )
             )
             print(
@@ -919,11 +847,25 @@ class AnomalyDetection:
                     accuracy_train_source, accuracy_train_target
                 )
             )
+
             print(
-                "accuracy test source = {:.4f}, accuracy test target = {:.4f}".format(
-                    accuracy_test_source, accuracy_test_target
+                "loss test source normal = {:.4f}, loss test source anomaly = {:.4f}, loss test target normal = {:.4f},loss test target anomaly = {:.4f},".format(
+                    loss_test_source_normal,
+                    loss_test_source_anomaly,
+                    loss_test_target_normal,
+                    loss_test_target_anomaly,
                 )
             )
+
+            print(
+                "accuracy test source normal = {:.4f}, accuracy test source anomaly = {:.4f}, accuracy test target normal = {:.4f}, accuracy test target anomaly = {:.4f},".format(
+                    accuracy_test_source_normal,
+                    accuracy_test_source_anomaly,
+                    accuracy_test_target_normal,
+                    accuracy_test_target_anomaly,
+                )
+            )
+
             print(
                 "accuracy domain = {:.4f},  accuracy decision = {:.4f}, roc_auc = {:.4f}".format(
                     accuracy_domain, accuracy_decision, roc_auc
@@ -935,13 +877,17 @@ class AnomalyDetection:
                 "loss_train": loss_train,
                 "loss_train_source": loss_train_source,
                 "loss_train_target": loss_train_target,
-                "loss_test_source": loss_test_source,
-                "loss_test_target": loss_test_target,
+                "loss_test_source_normal": loss_test_source_normal,
+                "loss_test_source_anomaly": loss_test_source_anomaly,
+                "loss_test_target_normal": loss_test_target_normal,
+                "loss_test_target_anomaly": loss_test_target_anomaly,
                 "accuracy_train": accuracy_train,
                 "accuracy_train_source": accuracy_train_source,
                 "accuracy_train_target": accuracy_train_target,
-                "accuracy_test_source": accuracy_test_source,
-                "accuracy_test_target": accuracy_test_target,
+                "accuracy_test_source_normal": accuracy_test_source_normal,
+                "accuracy_test_source_anomaly": accuracy_test_source_anomaly,
+                "accuracy_test_target_normal": accuracy_test_target_normal,
+                "accuracy_test_target_anomaly": accuracy_test_target_anomaly,
                 "f1_train": f1_train,
                 "accuracy_domain_test": accuracy_domain,
                 "accuracy_decision_test": accuracy_decision,
