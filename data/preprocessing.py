@@ -323,9 +323,9 @@ class DataPreprocessing:
         else:
             return None
 
-    def elim_labels(self):
+    def labels_elim(self):
         """
-        labels without normal anomaly that in test data but not in train data (67,68,69,70,71,72)
+        labels (number) without normal anomaly that in test data but not in train data (67,68,69,70,71,72)
         """
         # labels_to_num_without_normal_anomaly
         labels_to_num_without_normal_anomaly = (
@@ -337,12 +337,37 @@ class DataPreprocessing:
         unique_labels_dict = self.load_unique_labels_dict()
         labels_train = unique_labels_dict["train"]
 
+        # num to labels
+        num_to_labels = self.number_to_labels()
+
         # should be 67,68,69,70,71,72. Labels of bearing
-        labels_elim = [i for i in labels_without if i not in labels_train]
+        labels_elim_without_normal_anomaly = [
+            i for i in labels_without if i not in labels_train
+        ]
 
-        return labels_elim
+        # should be name of the labels 67,68,69,70,71,72
+        labels_elim_without_normal_anomaly_string = [
+            l
+            for (l, n) in labels_to_num_without_normal_anomaly.items()
+            if n in labels_elim_without_normal_anomaly
+        ]
 
-    def data_analysis_dict(self):
+        # name of the labels 67,68,69,70,71,72 with out bearing target
+        labels_elim_without_normal_anomaly_string = [
+            "_".join(l.split("_")[2:])
+            for l in labels_elim_without_normal_anomaly_string
+        ]
+
+        # labels elim in labels normal anomaly
+        labels_elim_normal_anomaly = [
+            n
+            for (n, l) in num_to_labels.items()
+            if any(l_elim in l for l_elim in labels_elim_without_normal_anomaly_string)
+        ]
+
+        return labels_elim_normal_anomaly
+
+    def labels_analysis_dict(self):
         """
         get the (unique) label of source and target in train data
         """
@@ -353,39 +378,95 @@ class DataPreprocessing:
         unique_train_labels = unique_labels_dict["train"]
         unique_test_labels = unique_labels_dict["test"]
 
+        # labels elim
+        labels_elim = self.labels_elim()
+
         # sort domain from number to label
-        label_dict = self.number_to_labels()
-        if label_dict is not None and unique_labels_dict is not None:
+        num_to_labels = self.number_to_labels()
+        if num_to_labels is not None and unique_labels_dict is not None:
+
+            # train source
             data_analysis_dict["train_source"] = [
                 n
-                for n, l in label_dict.items()
+                for n, l in num_to_labels.items()
                 if "source" in l and n in unique_train_labels
             ]
+
+            # train target
             data_analysis_dict["train_target"] = [
                 n
-                for n, l in label_dict.items()
+                for n, l in num_to_labels.items()
                 if "target" in l and n in unique_train_labels
             ]
+
+            # test normal
             data_analysis_dict["test_normal"] = [
                 n
-                for n, l in label_dict.items()
+                for n, l in num_to_labels.items()
                 if "normal" in l and n in unique_test_labels
             ]
+
+            # test anomaly
             data_analysis_dict["test_anomaly"] = [
                 n
-                for n, l in label_dict.items()
+                for n, l in num_to_labels.items()
                 if "anomaly" in l and n in unique_test_labels
             ]
+
+            # test source
             data_analysis_dict["test_source"] = [
                 n
-                for n, l in label_dict.items()
+                for n, l in num_to_labels.items()
                 if "source" in l and n in unique_test_labels
             ]
+
+            # test target
             data_analysis_dict["test_target"] = [
                 n
-                for n, l in label_dict.items()
+                for n, l in num_to_labels.items()
                 if "target" in l and n in unique_test_labels
             ]
+
+            # test source normal
+            test_source = data_analysis_dict["test_source"]
+            test_normal = data_analysis_dict["test_normal"]
+
+            data_analysis_dict["test_source_normal"] = [
+                l
+                for l in np.unique(test_source + test_normal)
+                if l in test_source and l in test_normal and l not in labels_elim
+            ]
+
+            # test source anomaly
+            test_source = data_analysis_dict["test_source"]
+            test_anomaly = data_analysis_dict["test_anomaly"]
+
+            data_analysis_dict["test_source_anomaly"] = [
+                l
+                for l in np.unique(test_source + test_anomaly)
+                if l in test_source and l in test_anomaly and l not in labels_elim
+            ]
+
+            # test target normal
+            test_target = data_analysis_dict["test_target"]
+            test_normal = data_analysis_dict["test_normal"]
+
+            data_analysis_dict["test_target_normal"] = [
+                l
+                for l in np.unique(test_target + test_normal)
+                if l in test_target and l in test_normal and l not in labels_elim
+            ]
+
+            # test target anomaly
+            test_target = data_analysis_dict["test_target"]
+            test_anomaly = data_analysis_dict["test_anomaly"]
+
+            data_analysis_dict["test_target_anomaly"] = [
+                l
+                for l in np.unique(test_target + test_anomaly)
+                if l in test_target and l in test_anomaly and l not in labels_elim
+            ]
+
             return data_analysis_dict
 
         else:
@@ -398,7 +479,7 @@ class DataPreprocessing:
         data_statistic_dict = {}
 
         # get the data analysis dict
-        data_analysis_dict = self.data_analysis_dict()
+        data_analysis_dict = self.labels_analysis_dict()
 
         # read data
         _, train_label, _, test_label = self.read_data()
@@ -479,28 +560,32 @@ if __name__ == "__main__":
     # print("unique ts index", np.unique(test_label[:, 0]))
     for i in test_label:
         print(i)
-    check_unique = np.unique(test_label[:, -1])
+    check_unique = np.unique(test_label[:, 1])
+
     print("check_unique len:", len(check_unique))
     print("check_unique:", check_unique)
+    print()
+
     unique_labels_dict = data_preprocessing.load_unique_labels_dict()
     # print("unique_labels_dict:", unique_labels_dict)
-    out = data_preprocessing.data_analysis_dict()
+    out = data_preprocessing.labels_analysis_dict()
     # print("out:", out)
 
     for k, v in out.items():
         print(k, v, len(v))
 
+    # test_source_normal = [i f]
+
     # out = data_preprocessing.data_statistic_dict()
-    # print("out:", out)
 
     # for k, v in out.items():
-    #     print(k, len(v))
+    #     print(k, v, len(v))
 
     out = data_preprocessing.labels_to_num_without_normal_anomaly()
     # print("out:", out)
 
-    out = data_preprocessing.elim_labels()
-    print("out:", out)
+    labels_elim = data_preprocessing.labels_elim()
+    print("labels_elim:", labels_elim)
 
     end = default_timer()
 
