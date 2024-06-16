@@ -15,6 +15,7 @@ import seaborn as sns
 from neptune.utils import stringify_unsupported
 from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import roc_curve, auc
+from torchaudio.transforms import SpeedPerturbation
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -347,7 +348,7 @@ class AnomalyDetection:
             distance_concat_windows_this_ts = distance_test_concat[:, ws]
 
             # mean distance of all windows from a sigle timeseries
-            distance_concat_windows_this_ts = distance_concat_windows_this_ts.mean(
+            distance_concat_windows_this_ts = distance_concat_windows_this_ts.max(
                 axis=1
             )
 
@@ -503,6 +504,29 @@ class AnomalyDetection:
 
             return confusion_matrix(y_pred=domain_pred, y_true=y_true)
 
+    def speed_perturb(self, X, speed_factors):
+        """
+        use augmentation as purturb the speed of the input given the speed factors and then down/upsampling the timeseries using cutting, padding
+        """
+        # load the speed purturb as the augmentation
+        augmentation = SpeedPerturbation(self.fs, speed_factors)
+
+        # use the augmentation for inputs
+        len_input = X.shape[-1]
+        X = augmentation(X)[0]
+        len_output = X.shape[-1]
+
+        # downsampling
+        if len_output > len_input:
+            start_idx = torch.randint(0, len_output - len_input)
+            X = X[start_idx : start_idx + len_input]
+
+        # upsampling
+        else:
+            X = F.pad(X, (0, len_input - len_output), mode="constant", value=0)
+
+        return X
+
     def train_test_loop(
         self,
         project: str,
@@ -515,6 +539,8 @@ class AnomalyDetection:
         epochs: int,
         k: int,
         percentile: float,
+        speed_purturb=False,
+        perturb_factors=None,
         loss_name="adacos",
         optimizer_name="AdamW",
         classifier_head=True,
@@ -556,7 +582,11 @@ class AnomalyDetection:
             "percentile": percentile,
             "distance": distance,
             "k": k,
+            "speed_purturb": speed_purturb,
         }
+
+        if speed_purturb == True:
+            hyperparameters["perturb_factors"] = perturb_factors
 
         if loss_name in ["arcface", "adacos"]:
             hyperparameters["classifier_head"] = classifier_head
