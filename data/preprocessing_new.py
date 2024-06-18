@@ -2,7 +2,6 @@ import os
 import numpy as np
 from scipy.io import wavfile
 import pandas as pd
-import pickle
 
 
 # data preprocessing
@@ -352,32 +351,31 @@ if __name__ == "__main__":
     machne_path = data_preprocessing.machines_path
     # print("machne_path:", machne_path)
 
-    train_data, train_label, test_data, test_label = read_data = (
-        data_preprocessing.read_data()
-    )
-    for i in read_data:
-        print(len(i))
+    # train_data, train_label, test_data, test_label = read_data = (
+    #     data_preprocessing.read_data()
+    # )
+    # for i in read_data:
+    #     print(len(i))
 
     # ts_lb = data_preprocessing.timeseries_labels()
     # print("ts_lb:", ts_lb)
 
-    train_data, train_label, test_data, test_label = windowing = (
-        data_preprocessing.windowing()
-    )
-    for i in windowing:
-        print(i.shape)
+    # train_data, train_label, test_data, test_label = windowing = (
+    #     data_preprocessing.windowing()
+    # )
+    # for i in windowing:
+    #     print(i.shape)
 
     # print(test_label)
 
-    ts_analysis = data_preprocessing.timeseries_analysis()
-    print("ts_analysis:", ts_analysis)
-    # train_data, train_label, test_data, test_label = load_data = (
-    #     data_preprocessing.load_data()
-    # )
-    # for i in load_data:
-    #     print(i.shape)
-    #     if len(i.shape) == 1:
-    #         print(np.unique(i, return_counts=True))
+    # ts_analysis = data_preprocessing.timeseries_analysis()
+    # print("ts_analysis:", ts_analysis)
+
+    train_data, train_label, test_data, test_label = load_data = (
+        data_preprocessing.load_data()
+    )
+    for i in load_data:
+        print(i.shape)
 
     # print(test_label)
     # print()
