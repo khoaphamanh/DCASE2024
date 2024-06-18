@@ -1,7 +1,7 @@
 from transformers import Wav2Vec2ForCTC
 import numpy as np
-import torch
 import torch.nn.functional as F
+import torch
 import sys
 import os
 from torch import nn
@@ -513,19 +513,21 @@ class AnomalyDetection:
 
         # use the augmentation for inputs
         len_input = X.shape[-1]
-        X = augmentation(X)[0]
-        len_output = X.shape[-1]
+        X_augmented = augmentation(X)[0]
+        len_output = X_augmented.shape[-1]
 
-        # downsampling
+        # downsampling: cutting
         if len_output > len_input:
-            start_idx = torch.randint(0, len_output - len_input)
-            X = X[start_idx : start_idx + len_input]
+            start_idx = torch.randint(0, len_output - len_input, size=(1,)).item()
+            X_augmented = X_augmented[:, start_idx : start_idx + len_input]
 
-        # upsampling
+        # upsampling: padding
         else:
-            X = F.pad(X, (0, len_input - len_output), mode="constant", value=0)
+            X_augmented = F.pad(
+                X_augmented, (0, len_input - len_output), mode="constant", value=0
+            )
 
-        return X
+        return X_augmented
 
     def train_test_loop(
         self,
@@ -540,7 +542,7 @@ class AnomalyDetection:
         k: int,
         percentile: float,
         speed_purturb=False,
-        perturb_factors=None,
+        speed_factors=None,
         loss_name="adacos",
         optimizer_name="AdamW",
         classifier_head=True,
@@ -586,7 +588,7 @@ class AnomalyDetection:
         }
 
         if speed_purturb == True:
-            hyperparameters["perturb_factors"] = perturb_factors
+            hyperparameters["perturb_factors"] = stringify_unsupported(speed_factors)
 
         if loss_name in ["arcface", "adacos"]:
             hyperparameters["classifier_head"] = classifier_head
@@ -677,6 +679,10 @@ class AnomalyDetection:
             for batch_train, (X_train, y_train) in enumerate(train_loader):
 
                 print("batch_train", batch_train)
+
+                if speed_purturb:
+                    X_train = self.speed_perturb(X_train, speed_factors=speed_factors)
+                    print("X_train shape:", X_train.shape)
 
                 # to device
                 X_train = X_train.to(self.device)
@@ -992,6 +998,8 @@ if __name__ == "__main__":
     k = utils.k_dev
     percentile = utils.percentile_dev
     distance = utils.distance_dev
+    speed_purturb = utils.speed_purturb
+    speed_factors = utils.speed_factors
 
     # general hyperparameters
     project = utils.project
@@ -1024,6 +1032,8 @@ if __name__ == "__main__":
         window_size=window_size,
         hop_size=hop_size,
         distance=distance,
+        speed_factors=speed_factors,
+        speed_purturb=speed_purturb,
     )
     # train_data, train_label = anomaly_detection.load_train_data()
     # print("train_data shape:", train_data.shape)
