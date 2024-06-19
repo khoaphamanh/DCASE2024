@@ -45,6 +45,13 @@ class DataPreprocessing:
         # analysis
         self.timeseries_labels_path = os.path.join(self.data_path, "ts_lb.csv")
         self.timeseries_analysis_path = os.path.join(self.data_path, "ts_analysis.csv")
+        self.labels_num_to_string = {
+            "source": 0,
+            "target": 1,
+            "normal": 0,
+            "anomaly": 1,
+        }
+        self.num_classes_train = 2
 
     def read_data(self):
         """
@@ -73,9 +80,9 @@ class DataPreprocessing:
                 for name in name_ts:
                     # soure label 0, target label 1
                     if "source" in name:
-                        label = 0
+                        label = self.labels_num_to_string["source"]
                     elif "target" in name:
-                        label = 1
+                        label = self.labels_num_to_string["target"]
 
                     # path of each time series
                     name_path = os.path.join(type_path, name)
@@ -124,7 +131,6 @@ class DataPreprocessing:
 
         # get data
         train_data, train_label, test_data, test_label = self.read_data()
-        # , test_label_normal_anomaly
 
         # timeseries to labels
         ts_lb = self.timeseries_labels()
@@ -186,9 +192,9 @@ class DataPreprocessing:
                         # get labels for normal anomaly
                         lb_na_full = ts_lb[idx_ts]
                         if "normal" in lb_na_full:
-                            lb_na = 0
+                            lb_na = self.labels_num_to_string["normal"]
                         elif "anomaly" in lb_na_full:
-                            lb_na = 1
+                            lb_na = self.labels_num_to_string["anomaly"]
                         label_windows.append([idx_ts, lb, lb_na])
 
                         # timeseries analysis
@@ -324,11 +330,33 @@ class DataPreprocessing:
         """
         load time series analysis from csv as dict
         """
+        # load timeseries labels
+        timeseries_labels = self.timeseries_labels()
+
         # timeseries analysis
         if os.path.exists(self.timeseries_analysis_path):
 
             # read ts analysis
             timeseries_analysis = pd.read_csv(self.timeseries_analysis_path)
+
+            # add machine source and target to timeseries analysis
+            max_len_value = len(timeseries_analysis)
+            for m in self.machines:
+                for domain in ["source", "target"]:
+                    for data in ["train", "test"]:
+                        name = "{}_{}_{}".format(m, domain, data)
+                        ts = [n for (n, lb) in timeseries_labels.items() if name in lb]
+
+                        # add None to have same len with other columns
+                        name = "{}_{}_{}".format(data, m, domain)
+                        while len(ts) < max_len_value:
+                            ts.append(None)
+                        timeseries_analysis[name] = ts
+
+            # save it back to csv
+            timeseries_analysis.to_csv(self.timeseries_analysis_path, index=False)
+
+            # convert it to dict
             timeseries_analysis = timeseries_analysis.to_dict(orient="list")
             timeseries_analysis = {
                 k: [int(x) for x in v if pd.notna(x)]
@@ -339,7 +367,7 @@ class DataPreprocessing:
 
         else:
             self.windowing()
-            self.timeseries_analysis
+            return self.timeseries_analysis()
 
 
 if __name__ == "__main__":
@@ -368,14 +396,13 @@ if __name__ == "__main__":
 
     # print(test_label)
 
-    # ts_analysis = data_preprocessing.timeseries_analysis()
-    # print("ts_analysis:", ts_analysis)
+    # train_data, train_label, test_data, test_label = load_data = (
+    #     data_preprocessing.load_data()
+    # )
+    # for i in load_data:
+    #     print(i.shape)
 
-    train_data, train_label, test_data, test_label = load_data = (
-        data_preprocessing.load_data()
-    )
-    for i in load_data:
-        print(i.shape)
-
+    ts_analysis = data_preprocessing.timeseries_analysis()
+    print("ts_analysis:", ts_analysis)
     # print(test_label)
     # print()
