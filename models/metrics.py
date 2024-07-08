@@ -195,6 +195,14 @@ class AdaCosLoss(nn.Module):
             logits = self.logits(embedding=embedding)
         return logits
 
+    def return_softmax_value(self, embedding):
+        """
+        return softmax value
+        """
+        logits = self.logits(embedding=embedding)
+        probability = logits.softmax(dim=1)
+        return probability
+
     def pred_labels(self, embedding, y_true=None):
         """
         get the pred labels of given embedding, use for calculate accuracy and in evaluation moded
