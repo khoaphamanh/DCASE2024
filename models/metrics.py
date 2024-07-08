@@ -191,6 +191,9 @@ class AdaCosLoss(nn.Module):
         """
         return logits in evalualtion mode
         """
+        # check if array then conver to tensor
+        if isinstance(embedding, np.ndarray):
+            embedding = torch.tensor(embedding).to(self.device).float()
         with torch.no_grad():
             logits = self.logits(embedding=embedding)
         return logits
@@ -199,7 +202,7 @@ class AdaCosLoss(nn.Module):
         """
         return softmax value
         """
-        logits = self.logits(embedding=embedding)
+        logits = self.return_logits(embedding=embedding)
         probability = logits.softmax(dim=1)
         return probability
 
