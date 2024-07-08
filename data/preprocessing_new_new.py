@@ -45,9 +45,14 @@ class DataPreprocessing:
 
         # analysis
         self.num_classes_train = len(self.machines) * 2
-        self.unique_labels_machine_domain_path = "unique_labels_machine_domain.csv"
-        self.full_labels_ts_path = "full_labels_ts.csv"
-        self.ts_analysis_path = "ts_analysis123.csv"
+        self.unique_labels_machine_domain_path = os.path.join(
+            self.data_path, "unique_labels_machine_domain.csv"
+        )
+        self.full_labels_ts_path = os.path.join(self.data_path, "full_labels_ts.csv")
+        self.ts_analysis_path = os.path.join(self.data_path, "ts_analysis123.csv")
+        self.auc_roc_name = [
+            "{}_{}".format(m, d) for m in self.machines for d in ["source", "target"]
+        ]
 
     def read_data(self):
         """
@@ -163,81 +168,6 @@ class DataPreprocessing:
 
         return full_labels_ts
 
-    def ts_analysis(self):
-        """
-        sort the index of ts with labels of machine
-        """
-        # load full labels ts
-        full_labels_ts = self.full_labels_ts()
-
-        # create ts analysis
-        if not os.path.exists(self.ts_analysis_path):
-            ts_analysis = {}
-            for type in ["train", "test"]:
-                for domain in ["source", "target"]:
-                    key = "{}_{}".format(type, domain)
-                    ts_analysis[key] = [
-                        i
-                        for i, l in full_labels_ts.items()
-                        if type in l and domain in l
-                    ]
-                    if type == "test":
-                        for condition in ["normal", "anomaly"]:
-                            key = "{}_{}_{}".format(type, domain, condition)
-                            ts_analysis[key] = [
-                                i
-                                for i, l in full_labels_ts.items()
-                                if type in l and domain in l and condition in l
-                            ]
-
-                            key = "{}_{}".format(type, condition)
-                            ts_analysis[key] = [
-                                i
-                                for i, l in full_labels_ts.items()
-                                if type in l and condition in l
-                            ]
-
-                    for machine in self.machines:
-                        key = "{}_{}_{}".format(type, machine, domain)
-                        ts_analysis[key] = [
-                            i
-                            for i, l in full_labels_ts.items()
-                            if type in l and domain in l and machine in l
-                        ]
-
-            # save it to .csv for better visualize
-            ts_analysis_csv = copy.deepcopy(ts_analysis)
-            max_len = max([len(v) for v in ts_analysis.values()])
-
-            for k, v in ts_analysis_csv.items():
-                while len(v) < max_len:
-                    v.append(None)
-
-            ts_analysis_csv = pd.DataFrame(ts_analysis_csv)
-            ts_analysis_csv.to_csv(self.ts_analysis_path, index=False)
-
-        else:
-            ts_analysis = pd.read_csv(self.ts_analysis_path)
-            ts_analysis = ts_analysis.to_dict(orient="list")
-            ts_analysis = {
-                k: [int(x) for x in v if pd.notna(x)] for k, v in ts_analysis.items()
-            }
-
-        return ts_analysis
-
-    def label_analysis(self):
-        """
-        get the label of source and target for training
-        """
-        unique_labels_machine_domain = self.unique_labels_machine_domain()
-        domain = ["source", "target"]
-        label_analysis = {
-            d: [k for k, v in unique_labels_machine_domain.items() if d in v]
-            for d in domain
-        }
-
-        return label_analysis
-
     def windowing(self, window_size=None, hop_size=None):
         """
         Cut time series into segment with given window_size and hop_size
@@ -339,6 +269,81 @@ class DataPreprocessing:
         elif train == True and test == False:
             return train_data.astype(np.float32), train_label.astype(np.int32)
 
+    def ts_analysis(self):
+        """
+        sort the id of ts with labels of machine
+        """
+        # load full labels ts
+        full_labels_ts = self.full_labels_ts()
+
+        # create ts analysis
+        if not os.path.exists(self.ts_analysis_path):
+            ts_analysis = {}
+            for type in ["train", "test"]:
+                for domain in ["source", "target"]:
+                    key = "{}_{}".format(type, domain)
+                    ts_analysis[key] = [
+                        i
+                        for i, l in full_labels_ts.items()
+                        if type in l and domain in l
+                    ]
+                    if type == "test":
+                        for condition in ["normal", "anomaly"]:
+                            key = "{}_{}_{}".format(type, domain, condition)
+                            ts_analysis[key] = [
+                                i
+                                for i, l in full_labels_ts.items()
+                                if type in l and domain in l and condition in l
+                            ]
+
+                            key = "{}_{}".format(type, condition)
+                            ts_analysis[key] = [
+                                i
+                                for i, l in full_labels_ts.items()
+                                if type in l and condition in l
+                            ]
+
+                    for machine in self.machines:
+                        key = "{}_{}_{}".format(type, machine, domain)
+                        ts_analysis[key] = [
+                            i
+                            for i, l in full_labels_ts.items()
+                            if type in l and domain in l and machine in l
+                        ]
+
+            # save it to .csv for better visualize
+            ts_analysis_csv = copy.deepcopy(ts_analysis)
+            max_len = max([len(v) for v in ts_analysis.values()])
+
+            for k, v in ts_analysis_csv.items():
+                while len(v) < max_len:
+                    v.append(None)
+
+            ts_analysis_csv = pd.DataFrame(ts_analysis_csv)
+            ts_analysis_csv.to_csv(self.ts_analysis_path, index=False)
+
+        else:
+            ts_analysis = pd.read_csv(self.ts_analysis_path)
+            ts_analysis = ts_analysis.to_dict(orient="list")
+            ts_analysis = {
+                k: [int(x) for x in v if pd.notna(x)] for k, v in ts_analysis.items()
+            }
+
+        return ts_analysis
+
+    def label_analysis(self):
+        """
+        get the label of source and target for training
+        """
+        unique_labels_machine_domain = self.unique_labels_machine_domain()
+        domain = ["source", "target"]
+        label_analysis = {
+            d: [k for k, v in unique_labels_machine_domain.items() if d in v]
+            for d in domain
+        }
+
+        return label_analysis
+
 
 if __name__ == "__main__":
 
@@ -353,6 +358,7 @@ if __name__ == "__main__":
     # print("machne_path:", machne_path)
 
     data_path = data_preprocessing.data_path
+    # /home/phamanh/nobackup/DCASE2024/data
     # print("data_path:", data_path)
 
     num_classes_train = data_preprocessing.num_classes_train
@@ -386,14 +392,14 @@ if __name__ == "__main__":
 
     train_label = train_label[:, 1]
     check_unique_train = np.unique(train_label, return_counts=True)
-    print("check_unique_train:", check_unique_train)
+    # print("check_unique_train:", check_unique_train)
 
     test_label = test_label[:, 1]
     check_unique_test = np.unique(test_label, return_counts=True)
-    print("check_unique_test:", check_unique_test)
+    # print("check_unique_test:", check_unique_test)
 
     ts_analysis = data_preprocessing.ts_analysis()
-    # print(ts_analysis)
+    # print("ts_analysis:", ts_analysis)
     # print(ts_analysis.keys())
     # for k, v in ts_analysis.items():
     #     print(len(v))
@@ -407,3 +413,6 @@ if __name__ == "__main__":
 
     label_analysis = data_preprocessing.label_analysis()
     print("label_analysis:", label_analysis)
+
+    auc_roc_type = data_preprocessing.auc_roc_name
+    print("auc_roc_type:", auc_roc_type)
