@@ -86,7 +86,7 @@ class AnomalyDetection:
         self.ts_analysis = self.data_preprocessing.ts_analysis()
         self.label_analysis = self.data_preprocessing.label_analysis
         self.auc_roc_name = self.data_preprocessing.auc_roc_name
-        
+
         # time series information
         self.fs = self.data_preprocessing.fs
 
@@ -216,7 +216,7 @@ class AnomalyDetection:
         if y_true_array is not None:
             y_array = y_true_array[:, 0]
         elif y_pred_array is not None:
-            y_array = y_pred_array[:, 0]
+            y_array = y_pred_array
 
         # get the id of ts correspond to the type labels
         ts_ids = [self.ts_analysis[type] for type in type_labels]
@@ -278,7 +278,7 @@ class AnomalyDetection:
 
         return fig
 
-    def domain_anomaly_score_decision(
+    def anomaly_score_decision(
         self,
         k,
         distance,
@@ -286,12 +286,127 @@ class AnomalyDetection:
         embedding_train_array,
         embedding_test_array,
         y_pred_train_array,
-        y_test_array,
         y_pred_test_array,
+        y_test_array,
+        loss,
     ):
-    
-        
-        
+        """
+        return the anomaly score and anomaly decision
+        """
+
+        # check if all predicted unique machine available
+        unique_pred_train, count_pred_train = np.unique(
+            y_pred_train_array, return_counts=True
+        )
+        if len(unique_pred_train) == len(self.unique_labels_machine_domain) and np.all(
+            count_pred_train >= k
+        ):
+
+            # fit the knn to pred train data
+            knn = []
+            threshold_decision = []
+            unique_labels_machine_domain_inverse = {
+                l: n for n, l in self.unique_labels_machine_domain.item()
+            }
+
+            for test_machine_domain in self.auc_roc_name:
+
+                # get pred train data to fit knn
+                _, machine, domain = test_machine_domain.split("_")
+                label_train_string = "{}_{}".format(machine, domain)
+                label_train_number = unique_labels_machine_domain_inverse[
+                    label_train_string
+                ]
+                indices_train = np.where(y_pred_train_array == label_train_number)[0]
+
+                # fit the knn
+                embedding_train_data_to_fit = embedding_train_array[indices_train]
+                knn_train = NearestNeighbors(n_neighbors=k, metric=distance)
+                knn_train.fit(embedding_train_data_to_fit)
+
+                # find the threshold
+                distance_train, _ = knn_train.kneighbors(embedding_train_data_to_fit)
+                distance_train = np.mean(distance_train, axis=1)
+                threshold = np.percentile(distance_train, percentile)
+
+                # save the knn and threshold
+                knn.append(knn_train)
+                threshold_decision.append(threshold)
+
+            # # loop through all auc_roc for each machine and domain:
+            anomaly_score = {}
+            anomaly_decision = {}
+
+            # unique test id
+            unique_test_id = np.unique(y_test_array[:, 0])
+            for id in unique_test_id:
+
+                # get the indices of test
+                indices_test = np.where(y_test_array[:, 0] == id)[0]
+
+                # get the predicted label of the whole id timeserie
+                y_pred = y_pred_test_array[indices_test]
+                embedding_test_data_to_evaluate = embedding_test_array[indices_test]
+
+                unique_y_pred, counts_label = np.unique(y_pred, return_counts=True)
+                max_count = np.max(counts_label)
+                vote_idx = np.where(counts_label == max_count)[0]
+
+                # find the most vote of label for each time series
+                if len(vote_idx) == 1:
+                    argmax_vote = np.argmax(counts_label)
+                    pred_label = unique_y_pred[argmax_vote]
+                else:
+                    same_vote_label = unique_y_pred[vote_idx]
+                    same_vote_indices = np.where(np.isin(y_pred, same_vote_label))[0]
+                    embedding_same_vote = embedding_test_data_to_evaluate[
+                        same_vote_indices
+                    ]
+                    softmax_value = loss.return_softmax_value(embedding_same_vote)
+                    max_softmax_index = torch.argmax(softmax_value)
+                    max_softmax_index = np.unravel_index(
+                        max_softmax_index.item(), softmax_value.shape
+                    )
+                    argmax_vote = same_vote_indices[max_softmax_index[0]]
+                    pred_label = unique_y_pred[argmax_vote]
+
+                # evaluate it to knn pretrained models
+                knn_vote = knn[pred_label]
+                threshold_vote = threshold_decision[pred_label]
+
+                # find the distance test
+                distance_test, _ = knn_vote.kneighbors(embedding_test_data_to_evaluate)
+                distance_test = distance_test.mean(axis=1)
+                distance_test = np.max(distance_test)
+
+                anomaly_decision[id] = 1 if distance > threshold_vote else 0
+                anomaly_score[id] = distance
+
+        return anomaly_score, anomaly_decision
+
+    def accuracy_decision(self, y_pred_decision, y_test_array):
+        """
+        calculate accuracy decision between normal and anomaly given anomaly decision and y_test_array
+        """
+        # get only the value of anomaly decision
+        y_pred_decision = y_pred_decision.values()
+
+        # get the label normal and anomaly of y_test
+        y_test_array = y_test_array[:, [0, 2]]
+        unique_y_test_array = np.unique(y_test_array, axis=0)
+        sorted_indices = np.argsort(unique_y_test_array[:, 0])
+        sorted_unique_y_test_array = unique_y_test_array[sorted_indices]
+        y_true_decision = sorted_unique_y_test_array[:, 1]
+
+        # calculate accuracy decision
+        accuracy_decision = accuracy_score(
+            y_pred=y_pred_decision, y_true=y_true_decision
+        )
+
+        return accuracy_decision
+
+    def auc_pauc(self, anomaly_score, y_pred_array):
+        pass
 
     def train_test_loop(
         self,
@@ -576,6 +691,20 @@ class AnomalyDetection:
                 y_pred=y_pred_test_array, y_true=y_test_array[:, 1]
             )
             cm_test_fig = self.plot_confusion_matrix(cm=cm_test, name="test")
+
+            # anomaly score and anomaly decision
+            anomaly_score, anomaly_decision = self.anomaly_score_decision(
+                k=k,
+                distance=distance,
+                embedding_train_array=embedding_train_array,
+                embedding_test_array=embedding_test_array,
+                y_pred_train_array=y_pred_train_array,
+                y_pred_test_array=y_pred_test_array,
+                y_test_array=y_test_array,
+                loss=loss,
+            )
+
+            # accuracy decision
 
             # log the metrics in neptune
             metrics = {

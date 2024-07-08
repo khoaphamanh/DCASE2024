@@ -50,8 +50,14 @@ class DataPreprocessing:
         )
         self.full_labels_ts_path = os.path.join(self.data_path, "full_labels_ts.csv")
         self.ts_analysis_path = os.path.join(self.data_path, "ts_analysis123.csv")
+        self.label_analysis = {
+            d: [k for k, v in self.unique_labels_machine_domain().items() if d in v]
+            for d in ["source", "target"]
+        }
         self.auc_roc_name = [
-            "{}_{}".format(m, d) for m in self.machines for d in ["source", "target"]
+            "test_{}_{}".format(m, d)
+            for m in self.machines
+            for d in ["source", "target"]
         ]
 
     def read_data(self):
@@ -331,19 +337,6 @@ class DataPreprocessing:
 
         return ts_analysis
 
-    def label_analysis(self):
-        """
-        get the label of source and target for training
-        """
-        unique_labels_machine_domain = self.unique_labels_machine_domain()
-        domain = ["source", "target"]
-        label_analysis = {
-            d: [k for k, v in unique_labels_machine_domain.items() if d in v]
-            for d in domain
-        }
-
-        return label_analysis
-
 
 if __name__ == "__main__":
 
@@ -411,7 +404,7 @@ if __name__ == "__main__":
     # )
     # print("cw:", cw)
 
-    label_analysis = data_preprocessing.label_analysis()
+    label_analysis = data_preprocessing.label_analysis
     print("label_analysis:", label_analysis)
 
     auc_roc_type = data_preprocessing.auc_roc_name
