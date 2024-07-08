@@ -187,13 +187,20 @@ class AdaCosLoss(nn.Module):
         onehot.scatter_(1, y_true.unsqueeze(-1), 1)
         return onehot
 
+    def return_logits(self, embedding):
+        """
+        return logits in evalualtion mode
+        """
+        with torch.no_grad():
+            logits = self.logits(embedding=embedding)
+        return logits
+
     def pred_labels(self, embedding, y_true=None):
         """
         get the pred labels of given embedding, use for calculate accuracy and in evaluation moded
         """
-        with torch.no_grad():
-            logits = self.logits(embedding=embedding)
-            y_pred_labels = logits.argmax(dim=1)
+        logits = self.return_logits(embedding=embedding)
+        y_pred_labels = logits.argmax(dim=1)
         return y_pred_labels
 
     def calculate_loss(self, embedding, y_true):

@@ -77,12 +77,16 @@ class AnomalyDetection:
         self.data_preprocessing = DataPreprocessing(data_name)
         self.data_name = self.data_preprocessing.data_name
         self.num_classes_train = self.data_preprocessing.num_classes_train
+
+        # data analysis
         self.unique_labels_machine_domain = (
             self.data_preprocessing.unique_labels_machine_domain()
         )
         self.full_labels_ts = self.data_preprocessing.full_labels_ts()
-        self.ts_analysis = self.data_preprocessing.full_labels_ts()
-
+        self.ts_analysis = self.data_preprocessing.ts_analysis()
+        self.label_analysis = self.data_preprocessing.label_analysis
+        self.auc_roc_name = self.data_preprocessing.auc_roc_name
+        
         # time series information
         self.fs = self.data_preprocessing.fs
 
@@ -151,6 +155,7 @@ class AnomalyDetection:
                 y=y_train[:, 1],
             )
         ).float()
+        # print("class_weights:", self.class_weights)
 
         # dataloader
         train_data = TensorDataset(
@@ -197,10 +202,96 @@ class AnomalyDetection:
 
         return X_augmented
 
-    def get_indices(self, type_labels):
+    def get_indices(
+        self,
+        y_pred_array=None,
+        y_true_array=None,
+        type_labels=["train_source", "train_target"],
+    ):
         """
-        get indices of train source, train target,
+        get indices of source, target, normal, anomly from y_pred_array or y_train_array
         """
+
+        # y_array if not None:
+        if y_true_array is not None:
+            y_array = y_true_array[:, 0]
+        elif y_pred_array is not None:
+            y_array = y_pred_array[:, 0]
+
+        # get the id of ts correspond to the type labels
+        ts_ids = [self.ts_analysis[type] for type in type_labels]
+
+        # get the index of id ts from y_array
+        indices = []
+        for id in ts_ids:
+            idx = np.where(np.isin(y_array, id))[0]
+            indices.append(idx)
+
+        return indices
+
+    def accuracy_source_target(self, y_pred_array, y_true_array, type_labels):
+        """
+        calculate the accuracy source, target given y_true and y_pred_label
+        """
+        # get the indices:
+        indices = self.get_indices(y_true_array=y_true_array, type_labels=type_labels)
+
+        # calculate accuracy
+        y_true_array = y_true_array[:, 1]
+        accuracy = []
+        for idx in indices:
+            y_pred_domain = y_pred_array[idx]
+            y_true_domain = y_true_array[idx]
+            acc = accuracy_score(y_pred=y_pred_domain, y_true=y_true_domain)
+            accuracy.append(acc)
+
+        return accuracy
+
+    def loss_source_target(self, embedding_array, y_true_array, loss, type_labels):
+        """
+        calculate the loss source, target given y_array
+        """
+        # get the indices
+        indices = self.get_indices(y_true_array=y_true_array, type_labels=type_labels)
+
+        # calculate the losses
+        y_true_array = y_true_array[:, 1]
+        losses = []
+        for idx in indices:
+            embedding_domain = embedding_array[idx]
+            y_true_domain = y_true_array[idx]
+            loss_domain = loss.calculate_loss(embedding_domain, y_true_domain)
+            losses.append(loss_domain)
+
+        return losses
+
+    def plot_confusion_matrix(self, cm, name="train"):
+        """
+        plot the confusion matrix
+        """
+        fig = plt.figure(figsize=(35, 16))
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False)
+        titel = "Confusion Matrix {}".format(name)
+        plt.title(titel, fontsize=18)
+        plt.xlabel("Predicted Labels", fontsize=15)
+        plt.ylabel("True Labels", fontsize=15)
+
+        return fig
+
+    def domain_anomaly_score_decision(
+        self,
+        k,
+        distance,
+        percentile,
+        embedding_train_array,
+        embedding_test_array,
+        y_pred_train_array,
+        y_test_array,
+        y_pred_test_array,
+    ):
+    
+        
+        
 
     def train_test_loop(
         self,
@@ -417,5 +508,173 @@ class AnomalyDetection:
                         batch_test * batch_size : batch_test * batch_size + batch_size
                     ] = y_pred_test_label.cpu().numpy()
 
+            # type labels
+            type_labels_train = ["train_source", "train_target"]
+            type_labels_test = [
+                "test_source_normal",
+                "test_source_anomaly",
+                "test_target_normal",
+                "test_target_anomaly",
+            ]
+
             # loss train, loss train source, loss train target
             loss_train = loss_train / len(train_loader)
+            loss_train_source, loss_train_target = self.loss_source_target(
+                embedding_array=embedding_train_array,
+                y_true_array=y_train_array,
+                loss=loss,
+                type_labels=type_labels_train,
+            )
+
+            # loss test, loss_test_source_normal, loss_test_source_anomaly, loss_test_target_normal, loss_test_target_anomaly
+            loss_test = loss.calculate_loss(
+                embedding=embedding_test_array, y_true=y_test_array[:, 1]
+            )
+            (
+                loss_test_source_normal,
+                loss_test_source_anomaly,
+                loss_test_target_normal,
+                loss_test_target_anomaly,
+            ) = self.loss_source_target(
+                embedding_array=embedding_test_array,
+                y_true_array=y_test_array,
+                loss=loss,
+                type_labels=type_labels_test,
+            )
+
+            # accuracy train
+            accuracy_train = accuracy_score(
+                y_pred=y_pred_train_array, y_true=y_train_array[:, 1]
+            )
+            accuracy_train_source, accuracy_train_target = self.accuracy_source_target(
+                y_pred_array=y_pred_train_array,
+                y_true_array=y_train_array,
+                type_labels=type_labels_train,
+            )
+            # accuracy test, accuracy_test_source_normal, accuracy_test_source_anomaly, accuracy_test_target_normal, accuracy_test_target_anomaly
+            accuracy_test = accuracy_score(
+                y_pred=y_pred_test_array, y_true=y_test_array[:, 1]
+            )
+            (
+                accuracy_test_source_normal,
+                accuracy_test_source_anomaly,
+                accuracy_test_target_normal,
+                accuracy_test_target_anomaly,
+            ) = self.accuracy_source_target(
+                y_pred_array=y_pred_test_array,
+                y_true_array=y_test_array,
+                type_labels=type_labels_test,
+            )
+
+            # confusion matrix
+            cm_train = confusion_matrix(
+                y_pred=y_pred_train_array, y_true=y_train_array[:, 1]
+            )
+            cm_train_fig = self.plot_confusion_matrix(cm=cm_train, name="train")
+
+            cm_test = confusion_matrix(
+                y_pred=y_pred_test_array, y_true=y_test_array[:, 1]
+            )
+            cm_test_fig = self.plot_confusion_matrix(cm=cm_test, name="test")
+
+            # log the metrics in neptune
+            metrics = {
+                "loss_train": loss_train,
+                "loss_train_source": loss_train_source,
+                "loss_train_target": loss_train_target,
+                "loss_test": loss_test,
+                "loss_test_source_normal": loss_test_source_normal,
+                "loss_test_source_anomaly": loss_test_source_anomaly,
+                "loss_test_target_normal": loss_test_target_normal,
+                "loss_test_target_anomaly": loss_test_target_anomaly,
+                "accuracy_train": accuracy_train,
+                "accuracy_train_source": accuracy_train_source,
+                "accuracy_train_target": accuracy_train_target,
+                "accuracy_test": accuracy_test,
+                "accuracy_test_source_normal": accuracy_test_source_normal,
+                "accuracy_test_source_anomaly": accuracy_test_source_anomaly,
+                "accuracy_test_target_normal": accuracy_test_target_normal,
+                "accuracy_test_target_anomaly": accuracy_test_target_anomaly,
+                # "f1_train": f1_train,
+                # "accuracy_domain_test": accuracy_domain_test,
+                # "accuracy_decision_test": accuracy_anomaly_decision,
+                # "roc_auc_test": roc_auc,
+            }
+
+            run["metrics"].append(metrics, step=ep)
+
+            # log the images of confusion matrix
+            run["metrics/confusion_matrix_train"].append(cm_train_fig, step=ep)
+            plt.close()
+            run["metrics/confusion_matrix_test"].append(cm_test_fig, step=ep)
+            plt.close()
+
+
+# run this script
+if __name__ == "__main__":
+
+    # set the seed
+    seed = utils.seed
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("device:", device)
+    print("\n")
+
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    # hyperparameters
+    lr = utils.lr_new
+    emb_size = utils.emb_size_new
+    batch_size = utils.batch_size_new
+    wd = utils.wd_new
+    epochs = utils.epochs_new
+    optimizer_name = utils.optimizer_name_new
+    model_name = utils.model_name_new
+    scale = utils.scale_new
+    margin = utils.margin_new
+    loss_name = utils.loss_name_new
+    classifier_head = utils.classifier_head_new
+    window_size = utils.window_size_new
+    hop_size = utils.hop_size_new
+    k = utils.k_new
+    percentile = utils.percentile_new
+    distance = utils.distance_new
+    speed_purturb = utils.speed_purturb_new
+    speed_factors = utils.speed_factors_new
+
+    # general hyperparameters
+    project = utils.project
+    api_token = utils.api_token
+    data_name = utils.data_name_dev
+
+    # data preprocessing
+    anomaly_detection = AnomalyDetection(seed=seed, data_name=data_name)
+
+    # train model
+    anomaly_detection.train_test_loop(
+        model_name=model_name,
+        project=project,
+        api_token=api_token,
+        batch_size=batch_size,
+        emb_size=emb_size,
+        lr=lr,
+        wd=wd,
+        epochs=epochs,
+        k=k,
+        percentile=percentile,
+        scale=scale,
+        margin=margin,
+        classifier_head=classifier_head,
+        optimizer_name=optimizer_name,
+        loss_name=loss_name,
+        window_size=window_size,
+        hop_size=hop_size,
+        distance=distance,
+        speed_factors=speed_factors,
+        speed_purturb=speed_purturb,
+    )
