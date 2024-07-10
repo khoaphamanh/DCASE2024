@@ -16,6 +16,7 @@ from neptune.utils import stringify_unsupported
 from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import roc_curve, auc
 from torchaudio.transforms import SpeedPerturbation
+from scipy.stats import hmean
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -302,11 +303,13 @@ class AnomalyDetection:
             count_pred_train >= k
         ):
 
+            print("this case")
+
             # fit the knn to pred train data
             knn = []
             threshold_decision = []
             unique_labels_machine_domain_inverse = {
-                l: n for n, l in self.unique_labels_machine_domain.item()
+                l: n for n, l in self.unique_labels_machine_domain.items()
             }
 
             for test_machine_domain in self.auc_roc_name:
@@ -339,26 +342,42 @@ class AnomalyDetection:
 
             # unique test id
             unique_test_id = np.unique(y_test_array[:, 0])
+            print("unique_test_id:", unique_test_id)
             for id in unique_test_id:
-
+                print()
+                print("id", id)
                 # get the indices of test
                 indices_test = np.where(y_test_array[:, 0] == id)[0]
+                print("indices_test:", indices_test)
 
                 # get the predicted label of the whole id timeserie
                 y_pred = y_pred_test_array[indices_test]
+                print("y_pred:", y_pred)
                 embedding_test_data_to_evaluate = embedding_test_array[indices_test]
+                print(
+                    "embedding_test_data_to_evaluate shape:",
+                    embedding_test_data_to_evaluate.shape,
+                )
 
                 unique_y_pred, counts_label = np.unique(y_pred, return_counts=True)
+                print("unique_y_pred:", unique_y_pred)
+                print("counts_label:", counts_label)
                 max_count = np.max(counts_label)
+                print("max_count:", max_count)
                 vote_idx = np.where(counts_label == max_count)[0]
+                print("vote_idx:", vote_idx)
 
                 # find the most vote of label for each time series
                 if len(vote_idx) == 1:
+                    print("len(vote_idx) == 1")
                     argmax_vote = np.argmax(counts_label)
                     pred_label = unique_y_pred[argmax_vote]
                 else:
+                    print("len(vote_idx) != 1")
                     same_vote_label = unique_y_pred[vote_idx]
+                    print("same_vote_label:", same_vote_label)
                     same_vote_indices = np.where(np.isin(y_pred, same_vote_label))[0]
+                    print("same_vote_indices:", same_vote_indices)
                     embedding_same_vote = embedding_test_data_to_evaluate[
                         same_vote_indices
                     ]
@@ -368,8 +387,10 @@ class AnomalyDetection:
                         max_softmax_index.item(), softmax_value.shape
                     )
                     argmax_vote = same_vote_indices[max_softmax_index[0]]
-                    pred_label = unique_y_pred[argmax_vote]
+                    print("argmax_vote:", argmax_vote)
+                    pred_label = y_pred[same_vote_indices[max_softmax_index[0]]]
 
+                print("pred_label:", pred_label)
                 # evaluate it to knn pretrained models
                 knn_vote = knn[pred_label]
                 threshold_vote = threshold_decision[pred_label]
@@ -379,18 +400,20 @@ class AnomalyDetection:
                 distance_test = distance_test.mean(axis=1)
                 distance_test = np.max(distance_test)
 
-                anomaly_decision[id] = 1 if distance > threshold_vote else 0
-                anomaly_score[id] = distance
+                anomaly_decision[id] = 1 if distance_test > threshold_vote else 0
+                anomaly_score[id] = distance_test
 
-        return anomaly_score, anomaly_decision
+            print("anomaly_score", anomaly_score)
+            print("anomaly_decision", anomaly_decision)
 
-    def accuracy_decision(self, y_pred_decision, y_test_array):
+            return anomaly_score, anomaly_decision
+        else:
+            return None, None
+
+    def y_true_decision_each_ts(self, y_test_array):
         """
-        calculate accuracy decision between normal and anomaly given anomaly decision and y_test_array
+        get the true decision of each time series. This function should return an array [label of ts 7000, label of ts 7001,...,]
         """
-        # get only the value of anomaly decision
-        y_pred_decision = y_pred_decision.values()
-
         # get the label normal and anomaly of y_test
         y_test_array = y_test_array[:, [0, 2]]
         unique_y_test_array = np.unique(y_test_array, axis=0)
@@ -398,15 +421,105 @@ class AnomalyDetection:
         sorted_unique_y_test_array = unique_y_test_array[sorted_indices]
         y_true_decision = sorted_unique_y_test_array[:, 1]
 
+        return y_true_decision
+
+    def accuracy_decision(self, anomaly_decision, y_test_array):
+        """
+        calculate accuracy decision between normal and anomaly given anomaly decision and y_test_array
+        """
+        # get only the value of anomaly decision
+        anomaly_decision = anomaly_decision.values()
+
+        # get the label normal and anomaly of y_test
+        y_true_decision = self.y_true_decision_each_ts(y_test_array=y_test_array)
+
         # calculate accuracy decision
         accuracy_decision = accuracy_score(
-            y_pred=y_pred_decision, y_true=y_true_decision
+            y_pred=anomaly_decision, y_true=y_true_decision
         )
 
         return accuracy_decision
 
-    def auc_pauc(self, anomaly_score, y_pred_array):
-        pass
+    def accuracy_machine_domain_decision(self, anomaly_decision, y_test_array):
+        """
+        calculate accuracy of timeseries in each machine in each domain
+        """
+        # loop through all of test machine domain names
+        y_pred_decision = anomaly_decision.values()
+        y_true_decision = self.y_true_decision_each_ts(y_test_array=y_test_array)
+        test_machine_domain_all = self.auc_roc_name
+        accuracies = {}
+
+        for test_machine_domain in test_machine_domain_all:
+            _, machine, domain = test_machine_domain.split("_")
+            id = self.ts_analysis[test_machine_domain]
+            y_pred = y_pred_decision[id]
+            y_true = y_true_decision[id]
+            acc = accuracy_score(y_pred=y_pred, y_true=y_true)
+            accuracies["accuracy_{}_{}".format(machine, domain)] = acc
+
+        return accuracies
+
+    def auc_pauc(self, anomaly_score, y_test_array, ep):
+        """
+        calculate the auc and pauc decision for each machine in each domain
+        """
+        # loop through all of test machine domain names
+        y_true_ts = self.y_true_decision_each_ts(y_test_array=y_test_array)
+        y_pred_ts = anomaly_score.values()
+        auc_pauc_dict = {}
+        hmean_dict = {}
+
+        # Create subplots
+        fig, axes = plt.subplots(2, 7, figsize=(20, 10))
+        axes = axes.flatten()
+
+        for i, test_machine_domain in enumerate(self.auc_roc_name):
+
+            # get the id (indices)
+            id = self.ts_analysis[test_machine_domain]
+            y_pred = y_pred_ts[id]
+            y_true = y_true_ts[id]
+
+            # calculate the auc roc
+            fpr, tpr, thresholds = roc_curve(y_true, y_pred)
+            auc_roc = auc(fpr, tpr)
+
+            # calculate p auc roc
+            fpr_min = 0.0
+            fpr_max = 0.1
+            indices = np.where((fpr >= fpr_min) & (fpr <= fpr_max))
+            p_auc_roc = auc(fpr[indices], tpr[indices])
+
+            # Plot the ROC curve
+            axes[i].plot(fpr, tpr, label=f"AUC = {auc_roc:.2f}")
+
+            # Highlight the PAUC range
+            axes[i].fill_between(
+                fpr,
+                tpr,
+                where=(fpr >= fpr_min) & (fpr <= fpr_max),
+                color="orange",
+                alpha=0.3,
+                label=f"PAUC = {p_auc_roc:.2f}",
+            )
+
+            # get title and axis
+            hmean_machine = hmean([auc_roc, p_auc_roc])
+            _, machine, domain = test_machine_domain.split("_")
+            axes[i].set_title("{} {} hmean {}".format(machine, domain, hmean_machine))
+            axes[i].set_xlabel("False Positive Rate")
+            axes[i].set_ylabel("True Positive Rate")
+            axes[i].legend(loc="lower right")
+
+            # save the auc_roc and pauc and hmean
+            auc_pauc_dict[test_machine_domain] = [auc_roc, p_auc_roc]
+            hmean_dict[test_machine_domain] = hmean_machine
+
+        hmean_total = hmean(np.array(hmean_dict.values()))
+        fig.suptitle("AUC and PAUC in epoch {} with hmean {}".format(ep, hmean_total))
+
+        return fig, auc_pauc_dict, hmean_dict, hmean_total
 
     def train_test_loop(
         self,
@@ -623,6 +736,14 @@ class AnomalyDetection:
                         batch_test * batch_size : batch_test * batch_size + batch_size
                     ] = y_pred_test_label.cpu().numpy()
 
+            # create fake labels for debugging
+            y_pred_train_array = np.random.randint(
+                low=0, high=14, size=y_pred_train_array.shape
+            )
+            y_pred_test_array = np.random.randint(
+                low=0, high=14, size=y_pred_test_array.shape
+            )
+
             # type labels
             type_labels_train = ["train_source", "train_target"]
             type_labels_test = [
@@ -702,40 +823,71 @@ class AnomalyDetection:
                 y_pred_test_array=y_pred_test_array,
                 y_test_array=y_test_array,
                 loss=loss,
+                percentile=percentile,
             )
 
             # accuracy decision
+            if anomaly_score is not None and anomaly_decision is not None:
+                accuracy_decision = self.accuracy_decision(
+                    anomaly_decision=anomaly_decision, y_test_array=y_test_array
+                )
+
+                # accuracy decision of each machine
+                accuracy_machine_domain_decision = (
+                    self.accuracy_machine_domain_decision(
+                        anomaly_decision=anomaly_decision, y_test_array=y_test_array
+                    )
+                )
+
+                # auc_roc and p_auc_roc
+                fig_auc_roc, auc_pauc_dict, hmean_dict, hmean_total = self.auc_pauc(
+                    anomaly_score=anomaly_score, y_test_array=y_test_array, ep=ep
+                )
+
+                # log the metrics
+                metrics_decision = {
+                    k: v for k, v in accuracy_machine_domain_decision.items()
+                }
+                metrics_decision["accuracy_decision"] = accuracy_decision
+                metrics_decision["hmean_total"] = hmean_total
+
+                run["metrics_decision"].append(metrics_decision, step=ep)
+
+                # log the image of auc_roc and p_auc_roc
+                run["metrics_decision/auc_roc_p_auc_roc_hmean"].append(
+                    fig_auc_roc, step=ep
+                )
 
             # log the metrics in neptune
-            metrics = {
+            metrics_train = {
                 "loss_train": loss_train,
                 "loss_train_source": loss_train_source,
                 "loss_train_target": loss_train_target,
+                "accuracy_train": accuracy_train,
+                "accuracy_train_source": accuracy_train_source,
+                "accuracy_train_target": accuracy_train_target,
+            }
+
+            metrics_test = {
                 "loss_test": loss_test,
                 "loss_test_source_normal": loss_test_source_normal,
                 "loss_test_source_anomaly": loss_test_source_anomaly,
                 "loss_test_target_normal": loss_test_target_normal,
                 "loss_test_target_anomaly": loss_test_target_anomaly,
-                "accuracy_train": accuracy_train,
-                "accuracy_train_source": accuracy_train_source,
-                "accuracy_train_target": accuracy_train_target,
                 "accuracy_test": accuracy_test,
                 "accuracy_test_source_normal": accuracy_test_source_normal,
                 "accuracy_test_source_anomaly": accuracy_test_source_anomaly,
                 "accuracy_test_target_normal": accuracy_test_target_normal,
                 "accuracy_test_target_anomaly": accuracy_test_target_anomaly,
-                # "f1_train": f1_train,
-                # "accuracy_domain_test": accuracy_domain_test,
-                # "accuracy_decision_test": accuracy_anomaly_decision,
-                # "roc_auc_test": roc_auc,
             }
 
-            run["metrics"].append(metrics, step=ep)
+            run["metrics_train"].append(metrics_train, step=ep)
+            run["metrics_test"].append(metrics_test, step=ep)
 
             # log the images of confusion matrix
-            run["metrics/confusion_matrix_train"].append(cm_train_fig, step=ep)
+            run["metrics_train/confusion_matrix_train"].append(cm_train_fig, step=ep)
             plt.close()
-            run["metrics/confusion_matrix_test"].append(cm_test_fig, step=ep)
+            run["metrics_test/confusion_matrix_test"].append(cm_test_fig, step=ep)
             plt.close()
 
 
