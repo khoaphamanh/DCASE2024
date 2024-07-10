@@ -382,6 +382,8 @@ if __name__ == "__main__":
     )
     # for i in load_data:
     #     print(i.shape)
+    train_label_ts = train_label[:, 0]
+    # print("train_label_ts:", train_label_ts)
 
     train_label = train_label[:, 1]
     check_unique_train = np.unique(train_label, return_counts=True)
