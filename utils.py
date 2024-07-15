@@ -17,7 +17,7 @@ model_name_w2v = "facebook/wav2vec2-xls-r-300m"
 
 # wav2vec no processor hyperparameter tunning
 data_name_np = "develop"
-lr_np = 0.00008
+lr_np = 0.00005
 emb_size_np = 1024
 batch_size_np = 80
 wd_np = 1e-5
@@ -35,12 +35,12 @@ hop_size_np = 8000
 
 # wav2vec and knn for develop dataset
 project_dev = "DCASE2024/wav-knn"
-lr_dev = 0.00005
+lr_dev = 0.00008
 emb_size_dev = 1024
 batch_size_dev = 20
 wd_dev = 1e-5
 epochs_dev = 50
-model_name_dev = "facebook/wav2vec2-xls-r-300m"
+model_name_dev = "facebook/wav2vec2-xls-r-300m"  #  "facebook/wav2vec2-base-960h"
 loss_dev = "adacos"
 scale_dev = None
 margin_dev = None
@@ -48,7 +48,31 @@ optimizer_name_dev = "AdamW"
 loss_name_dev = "adacos"
 k_dev = 2
 distance_dev = "cosine"
-percentile_dev = 95
+percentile_dev = 80
+speed_purturb = True
+speed_factors = [0.9, 1.1, 1.0, 1.0, 1.0]
 classifier_head_dev = False
 window_size_dev = None
 hop_size_dev = None
+
+# new pipeline develop dataset
+project_dev = "DCASE2024/wav-knn"
+lr_new = 0.00005
+emb_size_new = 1024
+batch_size_new = 20
+wd_new = 1e-5
+epochs_new = 100
+model_name_new = "facebook/wav2vec2-xls-r-300m"  # "facebook/wav2vec2-base" "facebook/wav2vec2-base-960h"
+loss_new = "adacos"
+scale_new = None
+margin_new = None
+optimizer_name_new = "AdamW"
+loss_name_new = "adacos"
+k_new = 5
+distance_new = "cosine"
+percentile_new = 95
+speed_purturb_new = True
+speed_factors_new = [0.7, 0.8, 0.8, 1.0, 1.0, 1.1, 1.2]
+classifier_head_new = False
+window_size_new = None
+hop_size_new = None
