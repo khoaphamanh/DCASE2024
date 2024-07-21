@@ -19,6 +19,7 @@ from torchaudio.transforms import SpeedPerturbation
 from scipy.stats import hmean
 from torchvision.transforms import v2
 
+# import random
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -36,6 +37,7 @@ class Wav2Vec2Custom(nn.Module):
         output_size: int,
         classifier_head=True,
         window_size=None,
+        dropout=0.0,
     ):
         super().__init__()
         if window_size == None:
@@ -48,6 +50,7 @@ class Wav2Vec2Custom(nn.Module):
         if classifier_head:
             self.out_layer = nn.Sequential(
                 nn.Flatten(),
+                nn.Dropout(p=dropout),
                 nn.ReLU(),
                 nn.Linear(in_features=flatten_dim, out_features=emb_size),
                 nn.ReLU(),
@@ -56,6 +59,7 @@ class Wav2Vec2Custom(nn.Module):
         else:
             self.out_layer = nn.Sequential(
                 nn.Flatten(),
+                nn.Dropout(p=dropout),
                 nn.ReLU(),
                 nn.Linear(in_features=flatten_dim, out_features=emb_size),
             )
@@ -186,7 +190,7 @@ class AnomalyDetection:
         """
         # if apply speed perturb based on random choice
         choice = np.random.choice([True, False])
-        print("choice speed purturb:", choice)
+        # print("choice speed purturb:", choice)
 
         if choice == True:
             # load the speed purturb as the augmentation
@@ -219,7 +223,7 @@ class AnomalyDetection:
         """
         # if apply speed perturb based on random choice
         choice = np.random.choice([True, False])
-        print("choice mixup:", choice)
+        # print("choice mixup:", choice)
 
         if choice == True:
             # load the speed purturb as the augmentation
@@ -410,10 +414,6 @@ class AnomalyDetection:
                 y_pred = y_pred_test_array[indices_test]
                 print("y_pred:", y_pred)
                 embedding_test_data_to_evaluate = embedding_test_array[indices_test]
-                print(
-                    "embedding_test_data_to_evaluate shape:",
-                    embedding_test_data_to_evaluate.shape,
-                )
 
                 unique_y_pred, counts_label = np.unique(y_pred, return_counts=True)
                 print("unique_y_pred:", unique_y_pred)
@@ -446,8 +446,15 @@ class AnomalyDetection:
                     print("argmax_vote:", argmax_vote)
                     pred_label = y_pred[same_vote_indices[max_softmax_index[0]]]
 
+                # get the pred_label and the embedding test with the prediction same as pred label
                 pred_label = int(pred_label)
                 print("pred_label:", pred_label)
+                indices_pred_label_from_y_pred = np.where(y_pred == pred_label)[0]
+                print("indices_pred_label_from_y_pred:", indices_pred_label_from_y_pred)
+                embedding_test_data_to_evaluate = embedding_test_data_to_evaluate[
+                    indices_pred_label_from_y_pred
+                ]
+
                 # evaluate it to knn pretrained models
                 knn_vote = knn[pred_label]
                 threshold_vote = threshold_decision[pred_label]
@@ -502,80 +509,87 @@ class AnomalyDetection:
         """
         # loop through all of test machine domain names
         y_true_decision = self.y_true_decision_each_id(y_test_array=y_test_array)
-        auc_pauc_dict = {}
-        hmean_dict = {}
+        auc_dict = {}
+        pauc_dict = {}
         accuracy_decision_dict = {}
 
-        # Create subplots
-        n_axes = len(self.auc_roc_name)
-        axes_place = [
-            val
-            for pair in zip(
-                list(range(n_axes))[: n_axes // 2], list(range(n_axes))[n_axes // 2 :]
-            )
-            for val in pair
-        ]
-        fig, axes = plt.subplots(2, 7, figsize=(30, 15))
-        axes = axes.flatten()
+        # create suplots
+        n_axes = 21
+        n_cols = 7
+        n_rows = 3
+        auc_roc_name = np.numpy(self.auc_roc_name).reshape(-1, n_cols)
+        axes_place = np.arange(0, n_axes).reshape(3, -1)
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(30, 20))
 
-        for i, test_machine_domain in enumerate(self.auc_roc_name):
+        for i in range(n_cols):
 
-            # get the id (indices)
-            ids = self.ts_analysis[test_machine_domain]
-            y_score = [anomaly_score[id] for id in ids]
-            y_true = [y_true_decision[id] for id in ids]
-            y_pred = [anomaly_decision[id] for id in ids]
+            # plot auc and accuracy for machine source and target
+            for j in range(0, 1, 2):
 
-            # calculate the auc roc
-            fpr, tpr, thresholds = roc_curve(y_true, y_score)
-            auc_roc = auc(fpr, tpr)
+                # get test machine name
+                test_machine_domain = auc_roc_name[j][i]
+                _, machine, domain = test_machine_domain.split("_")
 
-            # calculate p auc roc
-            fpr_min = 0.0
-            fpr_max = 0.1
-            indices = np.where((fpr >= fpr_min) & (fpr <= fpr_max))
-            p_auc_roc = auc(fpr[indices], tpr[indices])
+                # get ids of each test machine domain
+                ids = self.ts_analysis[test_machine_domain]
+                y_score = [anomaly_score[id] for id in ids]
+                y_true = [y_true_decision[id] for id in ids]
+                y_pred = [anomaly_decision[id] for id in ids]
 
-            # Plot the ROC curve
-            ax = axes_place[i]
-            axes[ax].plot(fpr, tpr, label=f"AUC = {auc_roc:.2f}")
+                # calculate auc and accuracy
+                accuraccy_machine_domain = accuracy_score(y_pred=y_pred, y_true=y_true)
+                fpr, tpr, thresholds = roc_curve(y_true, y_score)
+                auc_roc = auc(fpr, tpr)
 
-            # Highlight the PAUC range
-            axes[ax].fill_between(
-                fpr,
-                tpr,
-                where=(fpr >= fpr_min) & (fpr <= fpr_max),
-                color="orange",
-                alpha=0.3,
-                label=f"PAUC = {p_auc_roc:.2f}",
-            )
+                # plot the auc
+                ax = axes_place[i]
+                axes[ax[j]].plot(fpr, tpr, label=f"AUC = {auc_roc:.2f}")
 
-            # calculate hmean and accuracies
-            hmean_machine = hmean([auc_roc, p_auc_roc])
-            accuracies_machine = accuracy_score(y_pred=y_pred, y_true=y_true)
+                # calculate pauc
+                if j == 2:
+                    fpr_min = 0.0
+                    fpr_max = 0.1
+                    indices = np.where((fpr >= fpr_min) & (fpr <= fpr_max))
+                    p_auc_roc = auc(fpr[indices], tpr[indices])
 
-            # get title and axis
-            _, machine, domain = test_machine_domain.split("_")
-            axes[ax].set_title(
-                "{} {} hmean {:.2f} acc {:.2f}".format(
-                    machine, domain, hmean_machine * 100, accuracies_machine
+                    # plot pauc
+                    axes[ax[j]].fill_between(
+                        fpr,
+                        tpr,
+                        where=(fpr >= fpr_min) & (fpr <= fpr_max),
+                        color="orange",
+                        alpha=0.3,
+                        label=f"PAUC = {p_auc_roc:.2f}",
+                    )
+
+                # get title, legende and axis
+                axes[ax[j]].set_title(
+                    "{} {} acc {:.2f}".format(machine, domain, accuraccy_machine_domain)
                 )
-            )
-            axes[ax].set_xlabel("FPR")
-            axes[ax].set_ylabel("TPR")
-            axes[ax].legend(loc="lower right")
+                axes[ax[j]].legend(loc="lower right")
+                axes[ax[j]].set_xlabel("FPR")
+                axes[ax[j]].set_ylabel("TPR")
 
-            # save the auc_roc and pauc and hmean
-            auc_pauc_dict[test_machine_domain] = [auc_roc, p_auc_roc]
-            hmean_dict["hmean_{}_{}".format(machine, domain)] = hmean_machine
-            accuracy_decision_dict["accuracy_{}_{}".format(machine, domain)] = (
-                accuracies_machine
-            )
+                # save it to dict
+                accuracy_decision_dict["accuracy_{}".format(test_machine_domain)] = (
+                    accuraccy_machine_domain
+                )
+                if j in range(0, 1):
+                    auc_dict[test_machine_domain] = auc_roc
+                else:
+                    pauc_dict[test_machine_domain] = p_auc_roc
 
-        hmean_total = hmean(np.array(list(hmean_dict.values())), axis=None) * 100
+        # calculate hmean total
+        print("auc_dict:", auc_dict)
+        print("pauc_dict:", pauc_dict)
+        print("accuracy_decision_dict:", accuracy_decision_dict)
+
+        hmean_total = (
+            hmean(list(auc_dict.values()) + list(pauc_dict.values()), axis=None) * 100
+        )
         fig.suptitle("AUC and PAUC in epoch {} with hmean {}".format(ep, hmean_total))
 
-        return fig, auc_pauc_dict, accuracy_decision_dict, hmean_dict, hmean_total
+        return fig, accuracy_decision_dict, hmean_total
 
     def train_test_loop(
         self,
@@ -596,6 +610,7 @@ class AnomalyDetection:
         loss_name="adacos",
         optimizer_name="AdamW",
         classifier_head=True,
+        dropout=0.0,
         scale=None,
         margin=None,
         window_size=None,
@@ -621,6 +636,7 @@ class AnomalyDetection:
             output_size=self.num_classes_train,
             classifier_head=classifier_head,
             window_size=window_size,
+            dropout=dropout,
         )
         num_params = sum(p.numel() for p in model.parameters())
 
@@ -649,6 +665,7 @@ class AnomalyDetection:
             "mixup": mixup,
             "num_params": num_params,
             "epochs": epochs,
+            "dropout": dropout,
         }
 
         if speed_purturb == True:
@@ -725,18 +742,17 @@ class AnomalyDetection:
             embedding_train_array = np.empty((len_train, emb_size))
             embedding_test_array = np.empty((len_test, emb_size))
 
-            # training mode
-            model.train()
-            loss.train()
-
             # training batch loop
             for batch_train, (X_train, y_train) in enumerate(train_loader):
 
+                print("batch_train", batch_train)
                 # save original X_train and y_train, y_pred to array
                 with torch.no_grad():
+                    model.eval()
                     X_train = X_train.to(self.device)
                     embedding_train = model(X_train)
                     X_train = X_train.to("cpu")
+
                 embedding_train_array[
                     batch_train * batch_size : batch_train * batch_size + batch_size
                 ] = (embedding_train.cpu().detach().numpy())
@@ -760,13 +776,16 @@ class AnomalyDetection:
                         X=X_train, y=y_train, alpha=alpha_mixup
                     )
 
+                # training mode
+                model.train()
+                loss.train()
+
                 # to device
                 X_train = X_train.to(self.device)
                 y_train_loss = y_train[:, 1].to(self.device)
 
                 # forward pass
                 embedding_train = model(X_train)
-                y_pred_train_label = loss.pred_labels(embedding=embedding_train)
 
                 # calculate the loss
                 loss_train_this_batch = loss(embedding_train, y_train_loss)
@@ -896,6 +915,8 @@ class AnomalyDetection:
 
             # accuracy decision
             if anomaly_score is not None and anomaly_decision is not None:
+
+                # accuracy decision
                 accuracy_decision = self.accuracy_decision(
                     anomaly_decision=anomaly_decision, y_test_array=y_test_array
                 )
@@ -903,9 +924,7 @@ class AnomalyDetection:
                 # auc_roc and p_auc_roc
                 (
                     fig_auc_roc,
-                    auc_pauc_dict,
                     accuracy_decision_dict,
-                    hmean_dict,
                     hmean_total,
                 ) = self.auc_pauc(
                     anomaly_score=anomaly_score,
@@ -915,7 +934,7 @@ class AnomalyDetection:
                 )
 
                 # log the metrics
-                metrics_decision = {**accuracy_decision_dict, **hmean_dict}
+                metrics_decision = {**accuracy_decision_dict}
 
                 metrics_decision["accuracy_decision"] = accuracy_decision
                 metrics_decision["hmean_total"] = hmean_total
@@ -970,15 +989,17 @@ if __name__ == "__main__":
     print("device:", device)
     print("\n")
 
+    # random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
     # hyperparameters
-    lr = utils.lr_new
+    lr = utils.lr_new_mixup
     emb_size = utils.emb_size_new_mixup
     batch_size = utils.batch_size_new_mixup
     wd = utils.wd_new_mixup
@@ -990,6 +1011,7 @@ if __name__ == "__main__":
     loss_name = utils.loss_name_new_mixup
     classifier_head = utils.classifier_head_new_mixup
     window_size = utils.window_size_new_mixup
+    dropout = utils.dropout_new_mixup
     hop_size = utils.hop_size_new_mixup
     k = utils.k_new_mixup
     percentile = utils.percentile_new_mixup
@@ -1022,6 +1044,7 @@ if __name__ == "__main__":
         scale=scale,
         margin=margin,
         classifier_head=classifier_head,
+        dropout=dropout,
         optimizer_name=optimizer_name,
         loss_name=loss_name,
         window_size=window_size,
