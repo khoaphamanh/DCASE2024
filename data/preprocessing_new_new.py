@@ -56,8 +56,8 @@ class DataPreprocessing:
         }
         self.auc_roc_name = [
             "test_{}_{}".format(m, d)
+            for d in ["source", "target", ""]
             for m in self.machines
-            for d in ["source", "target"]
         ]
 
     def read_data(self):
@@ -310,6 +310,14 @@ class DataPreprocessing:
                             ]
 
                     for machine in self.machines:
+
+                        key = "{}_{}".format(type, machine)
+                        ts_analysis[key] = [
+                            i
+                            for i, l in full_labels_ts.items()
+                            if type in l and machine in l
+                        ]
+
                         key = "{}_{}_{}".format(type, machine, domain)
                         ts_analysis[key] = [
                             i
@@ -411,3 +419,8 @@ if __name__ == "__main__":
 
     auc_roc_type = data_preprocessing.auc_roc_name
     print("auc_roc_type:", auc_roc_type)
+
+    auc_roc_type = np.array(auc_roc_type).reshape(-1, 7)
+    print("auc_roc_type:", auc_roc_type)
+
+    print("auc_roc_type:", auc_roc_type[0][6])
