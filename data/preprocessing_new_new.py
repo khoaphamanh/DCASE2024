@@ -55,9 +55,15 @@ class DataPreprocessing:
             for d in ["source", "target"]
         }
         self.auc_roc_name = [
-            "test_{}_{}".format(m, d)
-            for d in ["source", "target", ""]
+            "test_{}{}".format(m, d)
+            for d in ["_source", "_target", ""]
             for m in self.machines
+        ]
+
+        self.knn_name = [
+            "test_{}_{}".format(m, d)
+            for m in self.machines
+            for d in ["source", "target"]
         ]
 
     def read_data(self):
@@ -423,4 +429,4 @@ if __name__ == "__main__":
     auc_roc_type = np.array(auc_roc_type).reshape(-1, 7)
     print("auc_roc_type:", auc_roc_type)
 
-    print("auc_roc_type:", auc_roc_type[0][6])
+    print("auc_roc_type:", auc_roc_type[2][0])
