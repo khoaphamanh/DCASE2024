@@ -147,7 +147,7 @@ class AdaCosLoss(nn.Module):
                 # update scale
                 self.scale = torch.log(B_avg) / torch.cos(
                     torch.min(
-                        torch.pi / 10 * torch.ones_like(angle_median),
+                        torch.pi / 4 * torch.ones_like(angle_median),
                         angle_median,
                     )
                 )
