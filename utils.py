@@ -3,11 +3,10 @@
 # general hyperparameters
 seed = 1998
 api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
-project = "DCASE2024/wav-test"
+project = "DCASE2024/wav-bu"
 data_name_dev = "develop"
 
 # wav2vec no hyperparameter tunning
-project = "DCASE2024/wav-test"
 lr_w2v = 0.0005
 emb_w2v = 2048
 batch_size_w2v = 20
@@ -79,11 +78,11 @@ classifier_head_new = False
 window_size_new = None
 hop_size_new = None
 
-# new pipeline develop dataset
+# new pipeline mixup
 project_dev = "DCASE2024/wav-knn"
 lr_new_mixup = 0.00005
 emb_size_new_mixup = 1024
-batch_size_new_mixup = 40
+batch_size_new_mixup = 100
 wd_new_mixup = 1e-5
 epochs_new_mixup = 150
 model_name_new_mixup = "facebook/wav2vec2-xls-r-300m"  # "facebook/wav2vec2-base" "facebook/wav2vec2-base-960h"
@@ -96,9 +95,35 @@ k_new_mixup = 10
 distance_new_mixup = "cosine"
 percentile_new_mixup = 95
 speed_purturb_new_mixup = True
-speed_factors_new_mixup = [0.6, 0.7, 0.8, 0.8, 1.0, 1.0, 1.0, 1.0, 1.1, 1.2, 1.3]
+speed_factors_new_mixup = [0.6, 0.7, 0.8, 0.9, 1.0, 1.0, 1.0, 1.0, 1.1, 1.2, 1.3]
 mixup_new_mixup = True
 mixup_alpha_new_mixup = 0.2
 classifier_head_new_mixup = False
 window_size_new_mixup = None
 hop_size_new_mixup = None
+dropout_new_mixup = 0.1
+
+# batch uniform sampling
+lr_bu = 0.0002
+emb_size_bu = 3
+batch_size_eval_bu = 100
+batch_size_sampler_bu = 20
+num_samples_batch_uniform_bu = 14000
+wd_bu = 1e-5
+epochs_bu = 150
+model_name_bu = "facebook/wav2vec2-xls-r-300m"
+loss_bu = "adacos"
+scale_bu = None
+margin_bu = None
+optimizer_name_bu = "AdamW"
+loss_name_bu = "adacos"
+k_bu = 10
+distance_bu = "cosine"
+threshold_bu = 3
+speed_purturb_bu = True
+speed_factors_bu = [0.6, 0.7, 0.8, 0.9, 1.0, 1.0, 1.0, 1.0, 1.1, 1.2, 1.3]
+mixup_bu = True
+mixup_alpha_bu = 0.2
+window_size_bu = None
+hop_size_bu = None
+dropout_bu = 0.0
