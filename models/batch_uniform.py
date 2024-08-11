@@ -563,7 +563,6 @@ class AnomalyDetection:
         # create suplots
         n_cols = 7
         n_rows = 2
-        n_axes = n_cols * n_rows
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 10))
         axes = axes.flatten()
 
@@ -768,6 +767,8 @@ class AnomalyDetection:
         # training loop:
         for ep in range(epochs):
 
+            print()
+            print("epoch", ep)
             # train uniform dataloader
             train_uniform_dataloader = self.batch_uniform_sampler(
                 batch_size_sampler=batch_size_sampler,
@@ -798,7 +799,7 @@ class AnomalyDetection:
             ):
 
                 check_bus.append(y_train)
-                print("batch_train_uniform", batch_train_uniform)
+                # print("batch_train_uniform", batch_train_uniform)
 
                 # augmentation
                 if speed_purturb:
@@ -845,7 +846,7 @@ class AnomalyDetection:
                 # train data
                 for batch_train, (X_train, y_train) in enumerate(train_loader):
 
-                    print("batch_train", batch_train)
+                    # print("batch_train", batch_train)
 
                     # to device
                     X_train = X_train.to(self.device)
@@ -875,7 +876,7 @@ class AnomalyDetection:
 
                 # test data
                 for batch_test, (X_test, y_test) in enumerate(test_loader):
-                    print("batch_test", batch_test)
+                    # print("batch_test", batch_test)
 
                     # to device
                     X_test = X_test.to(self.device)
@@ -903,13 +904,13 @@ class AnomalyDetection:
                 # back to cpu
                 X_test = X_test.cpu()
 
-            # create fake labels for debugging
-            y_pred_train_array = np.random.randint(
-                low=0, high=14, size=y_pred_train_array.shape
-            )
-            y_pred_test_array = np.random.randint(
-                low=0, high=14, size=y_pred_test_array.shape
-            )
+            # # create fake labels for debugging
+            # y_pred_train_array = np.random.randint(
+            #     low=0, high=14, size=y_pred_train_array.shape
+            # )
+            # y_pred_test_array = np.random.randint(
+            #     low=0, high=14, size=y_pred_test_array.shape
+            # )
 
             # type labels
             type_labels_train = ["train_source", "train_target"]
