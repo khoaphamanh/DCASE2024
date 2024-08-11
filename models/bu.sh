@@ -11,6 +11,7 @@
 #SBATCH --cpus-per-task=4          # Reservierung von 4 CPUs pro Rechenknoten
 #SBATCH --mem=64G                   # Reservierung von 10GB RAM
 #SBATCH --gres=gpu:1
+# #SBATCH --exclude=cc1g07  # dont use ndoe cc1g07 
 
 source /home/phamanh/anaconda3/bin/activate /home/phamanh/anaconda3/envs/dcase
 cd /home/phamanh/nobackup/DCASE2024/models
