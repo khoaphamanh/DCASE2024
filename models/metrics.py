@@ -127,9 +127,7 @@ class AdaCosLoss(nn.Module):
         # onehot vector based on y_true
         onehot = self.onehot_true_label(y_true)  # size (B, n_classes)
 
-        # # new scale
-        # print("self.training", self.training)
-
+        # new scale
         if self.training:
             with torch.no_grad():
                 # B_avg
