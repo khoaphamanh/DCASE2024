@@ -56,7 +56,7 @@ class DataPreprocessing:
         }
         self.auc_roc_name = [
             "test_{}{}".format(m, d)
-            for d in ["_source", "_target", ""]
+            for d in ["_source", "_target"]
             for m in self.machines
         ]
 
@@ -354,6 +354,10 @@ class DataPreprocessing:
 
 if __name__ == "__main__":
 
+    from timeit import default_timer
+
+    start = default_timer()
+
     data_name = "develop"
     data_preprocessing = DataPreprocessing(data_name=data_name)
     raw_data_path = data_preprocessing.raw_data_path
@@ -379,7 +383,7 @@ if __name__ == "__main__":
     #     print(len(i))
 
     unique_labels_machine_domain = data_preprocessing.unique_labels_machine_domain()
-    # print("unique_labels_machine_domain:", unique_labels_machine_domain)
+    print("unique_labels_machine_domain:", unique_labels_machine_domain)
 
     full_labels_ts = data_preprocessing.full_labels_ts()
     # print("full_labels_ts:", full_labels_ts)
@@ -397,7 +401,8 @@ if __name__ == "__main__":
     # for i in load_data:
     #     print(i.shape)
     train_label_ts = train_label[:, 0]
-    # print("train_label_ts:", train_label_ts)
+    print("train_label_ts len:", len(train_label_ts))
+    print("train_label_ts:", train_label_ts)
 
     train_label = train_label[:, 1]
     check_unique_train = np.unique(train_label, return_counts=True)
@@ -426,7 +431,14 @@ if __name__ == "__main__":
     auc_roc_type = data_preprocessing.auc_roc_name
     print("auc_roc_type:", auc_roc_type)
 
-    auc_roc_type = np.array(auc_roc_type).reshape(-1, 7)
-    print("auc_roc_type:", auc_roc_type)
+    knn_name = data_preprocessing.knn_name
+    print("knn_name:", knn_name)
 
-    print("auc_roc_type:", auc_roc_type[2][0])
+    # auc_roc_type = np.array(auc_roc_type).reshape(-1, 7)
+    # print("auc_roc_type:", auc_roc_type)
+
+    # print("auc_roc_type:", auc_roc_type[2][0])
+
+    # calculate time
+    end = default_timer()
+    print(end - start)
