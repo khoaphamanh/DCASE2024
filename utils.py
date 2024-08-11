@@ -104,9 +104,9 @@ hop_size_new_mixup = None
 dropout_new_mixup = 0.1
 
 # batch uniform sampling
-lr_bu = 0.0002
-emb_size_bu = 3
-batch_size_eval_bu = 100
+lr_bu = 0.00005
+emb_size_bu = 1024
+batch_size_eval_bu = 75
 batch_size_sampler_bu = 20
 num_samples_batch_uniform_bu = 14000
 wd_bu = 1e-5
