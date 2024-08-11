@@ -356,7 +356,6 @@ class AnomalyDetection:
         self,
         k,
         distance,
-        percentile,
         embedding_train_array,
         embedding_test_array,
         y_pred_train_array,
@@ -380,7 +379,7 @@ class AnomalyDetection:
 
             # fit the knn to pred train data
             knn = []
-            threshold_decision = []
+            scaler_knn = []
             unique_labels_machine_domain_inverse = {
                 l: n for n, l in self.unique_labels_machine_domain.items()
             }
@@ -388,6 +387,7 @@ class AnomalyDetection:
             for test_machine_domain in self.knn_name:
 
                 # get pred train data to fit knn
+                print()
                 print("test_machine_domain", test_machine_domain)
                 _, machine, domain = test_machine_domain.split("_")
                 label_train_string = "{}_{}".format(machine, domain)
@@ -408,14 +408,26 @@ class AnomalyDetection:
                 knn_train = NearestNeighbors(n_neighbors=k, metric=distance)
                 knn_train.fit(embedding_train_data_to_fit)
 
-                # find the threshold
+                # calculate the distance of each instance in embedding_train_data_to_fit
                 distance_train, _ = knn_train.kneighbors(embedding_train_data_to_fit)
+                print("distance_train shape:", distance_train.shape)
                 distance_train = np.mean(distance_train, axis=1)
-                threshold = np.percentile(distance_train, percentile)
+                print("distance_train shape:", distance_train.shape)
 
-                # save the knn and threshold
+                # calculate the mean and std of distance train ( only for visualize)
+                mean_distance_train = np.mean(distance_train)
+                print("mean_distance_train:", mean_distance_train)
+                std_distance_train = np.std(distance_train)
+                print("std_distance_train:", std_distance_train)
+                threshold_train = 3 * std_distance_train
+
+                # fit the scaler
+                scaler_train = StandardScaler()
+                scaler_train.fit(distance_train.reshape(-1, 1))
+
+                # save the knn and scaler
                 knn.append(knn_train)
-                threshold_decision.append(threshold)
+                scaler_knn.append([scaler_train, threshold_train])
 
             # # loop through all auc_roc for each machine and domain:
             anomaly_score = {}
@@ -446,11 +458,11 @@ class AnomalyDetection:
 
                 # find the most vote of label for each time series
                 if len(vote_idx) == 1:
-                    print("len(vote_idx) == 1")
+                    print("case len(vote_idx) == 1")
                     argmax_vote = np.argmax(counts_label)
                     pred_label = unique_y_pred[argmax_vote]
                 else:
-                    print("len(vote_idx) != 1")
+                    print("case len(vote_idx) != 1")
                     same_vote_label = unique_y_pred[vote_idx]
                     print("same_vote_label:", same_vote_label)
                     same_vote_indices = np.where(np.isin(y_pred, same_vote_label))[0]
@@ -459,6 +471,7 @@ class AnomalyDetection:
                         same_vote_indices
                     ]
                     softmax_value = loss.return_softmax_value(embedding_same_vote)
+                    print("softmax_value:", softmax_value)
                     max_softmax_index = torch.argmax(softmax_value)
                     max_softmax_index = np.unravel_index(
                         max_softmax_index.item(), softmax_value.shape
@@ -470,22 +483,29 @@ class AnomalyDetection:
                 # get the pred_label and the embedding test with the prediction same as pred label
                 pred_label = int(pred_label)
                 print("pred_label:", pred_label)
-                indices_pred_label_from_y_pred = np.where(y_pred == pred_label)[0]
-                print("indices_pred_label_from_y_pred:", indices_pred_label_from_y_pred)
-                embedding_test_data_to_evaluate = embedding_test_data_to_evaluate[
-                    indices_pred_label_from_y_pred
-                ]
+                # indices_pred_label_from_y_pred = np.where(y_pred == pred_label)[0]
+                # print("indices_pred_label_from_y_pred:", indices_pred_label_from_y_pred)
+                # embedding_test_data_to_evaluate = embedding_test_data_to_evaluate[
+                #     indices_pred_label_from_y_pred
+                # ]
 
                 # evaluate it to knn pretrained models
                 knn_vote = knn[pred_label]
-                threshold_vote = threshold_decision[pred_label]
+                scaler_vote, threshold_vote = scaler_knn[pred_label]
 
                 # find the distance test
                 distance_test, _ = knn_vote.kneighbors(embedding_test_data_to_evaluate)
                 distance_test = distance_test.mean(axis=1)
+                print("distance_test:", distance_test)
                 distance_test = np.max(distance_test)
+                print("distance_test:", distance_test)
+                print("threshold_vote", threshold_vote)
 
-                anomaly_decision[id] = 1 if distance_test > threshold_vote else 0
+                # get the decision based on z score
+                z_score_test = scaler_vote.transform(np.array([[distance_test]])).item()
+                print("z_score_test:", z_score_test)
+                anomaly_decision[id] = 1 if z_score_test > threshold_vote else 0
+                print("decision[id]:", anomaly_decision[id])
                 print("anomaly_decision:", anomaly_decision)
                 anomaly_score[id] = distance_test
 
@@ -528,96 +548,84 @@ class AnomalyDetection:
         """
         calculate the auc and pauc decision for each machine in each domain
         """
-        # loop through all of test machine domain names
+        # y_true_decision of test instances
         y_true_decision = self.y_true_decision_each_id(y_test_array=y_test_array)
+
+        # dict to store auc and pauc
         auc_dict = {}
         pauc_dict = {}
         accuracy_decision_dict = {}
 
-        # create suplots
-        n_axes = 21
-        n_cols = 7
-        n_rows = 3
-        auc_roc_name = np.array(self.auc_roc_name).reshape(-1, n_cols)
-        axes_place = np.arange(0, n_axes).reshape(-1, n_cols)
+        # define FPR range for pauc
+        fpr_min = 0
+        fpr_max = 0.1
 
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(30, 15))
+        # create suplots
+        n_cols = 7
+        n_rows = 2
+        n_axes = n_cols * n_rows
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 10))
         axes = axes.flatten()
 
-        for i in range(n_cols):
+        # loop through all the axes, each axes is plot of auc and pauc of machine_domain
+        for i in range(n_cols * n_rows):
 
-            # plot auc and accuracy for machine source and target
-            for j in range(n_rows):
+            # get the id given the machine_domain
+            test_machine_domain = self.auc_roc_name[i]
+            ids = self.ts_analysis[test_machine_domain]
+            y_score = [anomaly_score[id] for id in ids]
+            y_true = [y_true_decision[id] for id in ids]
+            y_pred = [anomaly_decision[id] for id in ids]
 
-                # get test machine name
-                test_machine_domain = auc_roc_name[j][i]
-                if j in [0, 1]:
-                    _, machine, domain = test_machine_domain.split("_")
-                else:
-                    # print("this case", j)
-                    # print("test_machine_domain:", test_machine_domain)
-                    domain, machine = test_machine_domain.split("_")
+            # calculate the auc roc
+            fpr, tpr, thresholds = roc_curve(y_true=y_true, y_score=y_score)
+            auc_roc = auc(fpr, tpr)
 
-                # get ids of each test machine domain
-                ids = self.ts_analysis[test_machine_domain]
-                y_score = [anomaly_score[id] for id in ids]
-                y_true = [y_true_decision[id] for id in ids]
-                y_pred = [anomaly_decision[id] for id in ids]
+            # calculate p auc roc
+            indices = np.where((fpr >= fpr_min) & (fpr <= fpr_max))
+            p_auc_roc = auc(fpr[indices], tpr[indices])
 
-                # calculate auc and accuracy
-                accuraccy_machine_domain = accuracy_score(y_pred=y_pred, y_true=y_true)
-                fpr, tpr, thresholds = roc_curve(y_true, y_score)
-                auc_roc = auc(fpr, tpr)
+            # plot the auc
+            axes[i].plot(fpr, tpr, label=f"AUC = {auc_roc:.4f}")
 
-                # plot the auc
-                ax = axes_place[:, i]
-                axes[ax[j]].plot(fpr, tpr, label=f"AUC = {auc_roc:.2f}")
+            # plot the pauc
+            axes[i].fill_between(
+                fpr,
+                tpr,
+                where=(fpr >= fpr_min) & (fpr <= fpr_max),
+                color="orange",
+                alpha=0.3,
+                label=f"PAUC = {p_auc_roc:.4f}",
+            )
 
-                # calculate pauc
-                if j == 2:
-                    fpr_min = 0.0
-                    fpr_max = 0.1
-                    indices = np.where((fpr >= fpr_min) & (fpr <= fpr_max))
-                    p_auc_roc = auc(fpr[indices], tpr[indices])
+            # accuracy machine domain
+            accuraccy_machine_domain = accuracy_score(y_pred=y_pred, y_true=y_true)
 
-                    # plot pauc
-                    axes[ax[j]].fill_between(
-                        fpr,
-                        tpr,
-                        where=(fpr >= fpr_min) & (fpr <= fpr_max),
-                        color="orange",
-                        alpha=0.3,
-                        label=f"PAUC = {p_auc_roc:.2f}",
-                    )
+            # get title and axis
+            _, machine, domain = test_machine_domain.split("_")
+            axes[i].set_title(
+                "{} {} acc {:.2f}".format(machine, domain, accuraccy_machine_domain)
+            )
+            axes[i].set_xlabel("FPR")
+            axes[i].set_ylabel("TPR")
+            axes[i].legend(loc="lower right")
 
-                # get title, legende and axis
-                axes[ax[j]].set_title(
-                    "{} {} acc {:.2f}".format(machine, domain, accuraccy_machine_domain)
-                )
-                axes[ax[j]].legend(loc="lower right")
-                axes[ax[j]].set_xlabel("FPR")
-                axes[ax[j]].set_ylabel("TPR")
+            # save it to dict
+            auc_dict[test_machine_domain] = auc_roc
+            pauc_dict[test_machine_domain] = p_auc_roc
+            accuracy_decision_dict[test_machine_domain] = accuraccy_machine_domain
 
-                # save it to dict
-                accuracy_decision_dict["accuracy_{}".format(test_machine_domain)] = (
-                    accuraccy_machine_domain
-                )
-                if j in [0, 1]:
-                    auc_dict[test_machine_domain] = auc_roc
-                else:
-                    pauc_dict[test_machine_domain] = p_auc_roc
-
-        # calculate hmean total
-        print("auc_dict:", auc_dict)
-        print("pauc_dict:", pauc_dict)
-        print("accuracy_decision_dict:", accuracy_decision_dict)
-
+        # calculate hmean
         hmean_total = (
             hmean(list(auc_dict.values()) + list(pauc_dict.values()), axis=None) * 100
         )
         fig.suptitle(
-            "AUC and PAUC in epoch {} with hmean {:.2f}".format(ep, hmean_total)
+            "AUC and PAUC in epoch {} with hmean {:.4f}".format(ep, hmean_total)
         )
+
+        print("auc_dict:", auc_dict)
+        print("pauc_dict:", pauc_dict)
+        print("accuracy_decision_dict:", accuracy_decision_dict)
 
         return fig, accuracy_decision_dict, hmean_total
 
@@ -634,7 +642,6 @@ class AnomalyDetection:
         wd: int,
         epochs: int,
         k: int,
-        percentile: float,
         speed_purturb=False,
         speed_factors=None,
         mixup=False,
@@ -696,7 +703,6 @@ class AnomalyDetection:
             "loss_name": loss_name,
             "optimizer_name": optimizer_name,
             "model_nane": model_name,
-            "percentile": percentile,
             "distance": distance,
             "k": k,
             "speed_purturb": speed_purturb,
@@ -786,10 +792,12 @@ class AnomalyDetection:
             # train uniform loop in training mode
             model.train()
             loss.train()
+            check_bus = []
             for batch_train_uniform, (X_train, y_train) in enumerate(
                 train_uniform_dataloader
             ):
 
+                check_bus.append(y_train)
                 print("batch_train_uniform", batch_train_uniform)
 
                 # augmentation
@@ -820,6 +828,15 @@ class AnomalyDetection:
                 loss_train_uniform_this_batch.backward()
                 optimizer.step()
 
+            check_bus = torch.cat(check_bus, dim=0).numpy()
+            check_bus, count = np.unique(check_bus[:, 1], return_counts=True)
+            print("check_bus:", check_bus)
+            print("count:", count)
+
+            # back to cpu
+            X_train = X_train.cpu()
+            y_train = y_train.cpu()
+
             # train and test data loop in evaluation mode
             model.eval()
             loss.eval()
@@ -832,7 +849,6 @@ class AnomalyDetection:
 
                     # to device
                     X_train = X_train.to(self.device)
-                    # y_train = y_train.to(self.device)
 
                     # forward pass
                     embedding_train = model(X_train)
@@ -887,13 +903,13 @@ class AnomalyDetection:
                 # back to cpu
                 X_test = X_test.cpu()
 
-            # # create fake labels for debugging
-            # y_pred_train_array = np.random.randint(
-            #     low=0, high=14, size=y_pred_train_array.shape
-            # )
-            # y_pred_test_array = np.random.randint(
-            #     low=0, high=14, size=y_pred_test_array.shape
-            # )
+            # create fake labels for debugging
+            y_pred_train_array = np.random.randint(
+                low=0, high=14, size=y_pred_train_array.shape
+            )
+            y_pred_test_array = np.random.randint(
+                low=0, high=14, size=y_pred_test_array.shape
+            )
 
             # type labels
             type_labels_train = ["train_source", "train_target"]
@@ -974,7 +990,6 @@ class AnomalyDetection:
                 y_pred_test_array=y_pred_test_array,
                 y_test_array=y_test_array,
                 loss=loss,
-                percentile=percentile,
             )
 
             # accuracy decision
@@ -1079,7 +1094,6 @@ if __name__ == "__main__":
     dropout = utils.dropout_bu
     hop_size = utils.hop_size_bu
     k = utils.k_bu
-    threshold = utils.threshold_bu
     distance = utils.distance_bu
     speed_purturb = utils.speed_purturb_bu
     speed_factors = utils.speed_factors_bu
@@ -1107,7 +1121,6 @@ if __name__ == "__main__":
         wd=wd,
         epochs=epochs,
         k=k,
-        percentile=threshold,
         scale=scale,
         margin=margin,
         dropout=dropout,
