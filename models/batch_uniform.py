@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from neptune.utils import stringify_unsupported
 from sklearn.neighbors import NearestNeighbors
-from sklearn.metrics import roc_curve, auc
+from sklearn.metrics import roc_auc_score,roc_curve
 from torchaudio.transforms import SpeedPerturbation
 from scipy.stats import hmean
 from torchvision.transforms import v2
@@ -69,6 +69,11 @@ class AnomalyDetection:
         data_name,
         seed,
     ):
+
+        # model path /home/phamanh/nobackup/DCASE2024/models/
+        self.model_dir_path = os.path.dirname(os.path.abspath(__file__))
+        self.model_path = os.path.join(self.model_dir_path, "model_embsize_3.pth")
+        self.loss_path = os.path.join(self.model_dir_path, "loss.pth")
 
         # data preprocessing
         self.data_preprocessing = DataPreprocessing(data_name)
@@ -578,11 +583,10 @@ class AnomalyDetection:
 
             # calculate the auc roc
             fpr, tpr, thresholds = roc_curve(y_true=y_true, y_score=y_score)
-            auc_roc = auc(fpr, tpr)
+            auc_roc = roc_auc_score(y_true=y_true, y_score= y_score)
 
             # calculate p auc roc
-            indices = np.where((fpr >= fpr_min) & (fpr <= fpr_max))
-            p_auc_roc = auc(fpr[indices], tpr[indices])
+            p_auc_roc =roc_auc_score(y_true=y_true, y_score= y_score, max_fpr=fpr_max)
 
             # plot the auc
             axes[i].plot(fpr, tpr, label=f"AUC = {auc_roc:.4f}")
@@ -904,6 +908,11 @@ class AnomalyDetection:
                 # back to cpu
                 X_test = X_test.cpu()
 
+            # # save model if emb_size equal 3
+            # if emb_size == 3:
+            #     torch.save(model.state_dict(), self.model_path)
+            #     torch.save(loss.state_dict(), self.loss_path)
+
             # # create fake labels for debugging
             # y_pred_train_array = np.random.randint(
             #     low=0, high=14, size=y_pred_train_array.shape
@@ -923,6 +932,7 @@ class AnomalyDetection:
 
             # loss train, loss train source, loss train target
             loss_train_uniform = loss_train_uniform / len(train_loader)
+            print("loss_train_uniform:", loss_train_uniform)
             loss_train_source, loss_train_target = self.loss_source_target(
                 embedding_array=embedding_train_array,
                 y_true_array=y_train_array,
