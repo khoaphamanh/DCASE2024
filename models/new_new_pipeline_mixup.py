@@ -93,6 +93,7 @@ class AnomalyDetection:
         self.ts_analysis = self.data_preprocessing.ts_analysis()
         self.label_analysis = self.data_preprocessing.label_analysis
         self.auc_roc_name = self.data_preprocessing.auc_roc_name
+        self.knn_name = self.data_preprocessing.knn_name
 
         # time series information
         self.fs = self.data_preprocessing.fs
@@ -364,7 +365,7 @@ class AnomalyDetection:
                 l: n for n, l in self.unique_labels_machine_domain.items()
             }
 
-            for test_machine_domain in self.auc_roc_name:
+            for test_machine_domain in self.knn_name:
 
                 # get pred train data to fit knn
                 print("test_machine_domain", test_machine_domain)
@@ -517,18 +518,25 @@ class AnomalyDetection:
         n_axes = 21
         n_cols = 7
         n_rows = 3
-        auc_roc_name = np.numpy(self.auc_roc_name).reshape(-1, n_cols)
-        axes_place = np.arange(0, n_axes).reshape(3, -1)
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(30, 20))
+        auc_roc_name = np.array(self.auc_roc_name).reshape(-1, n_cols)
+        axes_place = np.arange(0, n_axes).reshape(-1, n_cols)
+
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(30, 15))
+        axes = axes.flatten()
 
         for i in range(n_cols):
 
             # plot auc and accuracy for machine source and target
-            for j in range(0, 1, 2):
+            for j in range(n_rows):
 
                 # get test machine name
                 test_machine_domain = auc_roc_name[j][i]
-                _, machine, domain = test_machine_domain.split("_")
+                if j in [0, 1]:
+                    _, machine, domain = test_machine_domain.split("_")
+                else:
+                    # print("this case", j)
+                    # print("test_machine_domain:", test_machine_domain)
+                    domain, machine = test_machine_domain.split("_")
 
                 # get ids of each test machine domain
                 ids = self.ts_analysis[test_machine_domain]
@@ -542,7 +550,7 @@ class AnomalyDetection:
                 auc_roc = auc(fpr, tpr)
 
                 # plot the auc
-                ax = axes_place[i]
+                ax = axes_place[:, i]
                 axes[ax[j]].plot(fpr, tpr, label=f"AUC = {auc_roc:.2f}")
 
                 # calculate pauc
@@ -574,7 +582,7 @@ class AnomalyDetection:
                 accuracy_decision_dict["accuracy_{}".format(test_machine_domain)] = (
                     accuraccy_machine_domain
                 )
-                if j in range(0, 1):
+                if j in [0, 1]:
                     auc_dict[test_machine_domain] = auc_roc
                 else:
                     pauc_dict[test_machine_domain] = p_auc_roc
@@ -587,7 +595,9 @@ class AnomalyDetection:
         hmean_total = (
             hmean(list(auc_dict.values()) + list(pauc_dict.values()), axis=None) * 100
         )
-        fig.suptitle("AUC and PAUC in epoch {} with hmean {}".format(ep, hmean_total))
+        fig.suptitle(
+            "AUC and PAUC in epoch {} with hmean {:.2f}".format(ep, hmean_total)
+        )
 
         return fig, accuracy_decision_dict, hmean_total
 
