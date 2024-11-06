@@ -56,16 +56,13 @@ def download_data_unzip(data_name, url=None, data_machine=None):
     data_path = os.path.join(data_directory_path, data_name)
 
     # check if exist
-    data_machine = sorted(data_machine)
     machine_output_path = [os.path.join(data_path, m) for m in data_machine]
     check_machine = [os.path.exists(mp) for mp in machine_output_path]
 
     # downlaod the zip
     if not os.path.exists(data_path) or not all(check_machine):
         download_zip(url=url, output_path=data_path)
-        machine_zip_path = sorted(
-            [os.path.join(data_path, i) for i in os.listdir(data_path)]
-        )
+        machine_zip_path = [os.path.join(data_path, i) for i in os.listdir(data_path)]
 
         # unzip each machine
         for mp_zip in tqdm(
