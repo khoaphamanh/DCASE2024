@@ -14,7 +14,7 @@ def download_zip(url, output_path):
         response.raise_for_status()  # Check if the request was successful
 
         # Save the ZIP file temporarily
-        zip_file_path = "temp_download.zip"
+        zip_file_path = "{}.zip".format(develop_name)
         with open(zip_file_path, "wb") as file:
             for chunk in response.iter_content(chunk_size=8192):
                 file.write(chunk)
