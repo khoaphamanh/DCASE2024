@@ -4,7 +4,7 @@ from scipy.io import wavfile
 import pandas as pd
 import librosa
 import sys
-import pickle
+from tqdm import tqdm
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -243,6 +243,29 @@ class DataPreprocessing:
 
         return train_data, train_label, test_data, test_label
 
+    def log_melspectrogram(
+        self,
+        data,
+        window_size=400,
+        hop_size=160,
+        n_mels=128,
+        dB=True,
+    ):
+        # convert to float array
+        data = data.astype(float)
+
+        data_logmel = []
+        for ts in tqdm(data):
+            ms = librosa.feature.melspectrogram(
+                y=ts, sr=self.fs, n_fft=window_size, hop_length=hop_size, n_mels=n_mels
+            )
+            if dB:
+                ms = librosa.power_to_db(ms)
+            data_logmel.append(ms)
+
+        data_logmel = np.array(data_logmel)
+        return data_logmel
+
 
 if __name__ == "__main__":
 
@@ -299,6 +322,9 @@ if __name__ == "__main__":
 
     # for i in train_data[0]:
     #     print(i, end=" ")
+
+    data_logmel = data_preprocessing.log_melspectrogram(data=train_data)
+    print("data_logmel shape:", data_logmel.shape)
 
     end = default_timer()
     print(end - start)
