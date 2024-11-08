@@ -255,7 +255,7 @@ class DataPreprocessing:
         data = data.astype(float)
 
         data_logmel = []
-        for ts in tqdm(data):
+        for ts in data:
             ms = librosa.feature.melspectrogram(
                 y=ts, sr=self.fs, n_fft=window_size, hop_length=hop_size, n_mels=n_mels
             )
@@ -319,9 +319,6 @@ if __name__ == "__main__":
     # print("train_label:", train_label.shape)
     # print("test_data:", test_data.shape)
     # print("test_label:", test_label.shape)
-
-    # for i in train_data[0]:
-    #     print(i, end=" ")
 
     data_logmel = data_preprocessing.log_melspectrogram(data=train_data)
     print("data_logmel shape:", data_logmel.shape)
