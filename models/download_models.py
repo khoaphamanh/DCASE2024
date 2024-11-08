@@ -68,12 +68,6 @@ def download_data_unzip(model_name, url=None):
         # download model as zip file
         download_zip(url=url, path_output=path_prertrained_models_directory)
 
-        # unzip the model
-        unzip(
-            path_zip_file=path_prertrained_models_directory,
-            path_output=path_prertrained_models_name,
-        )
-
     else:
         print(f"{path_prertrained_models_name} is already downloaded")
 
