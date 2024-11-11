@@ -44,6 +44,7 @@ class DataPreprocessing:
             os.path.join(m, "attributes_00.csv") for m in self.path_machines
         ]
         self.type_data = ["train", "test"]
+        self.domain_data = ["source", "target"]
 
         # timeseries information
         self.fs = 16000
@@ -85,9 +86,9 @@ class DataPreprocessing:
             "{}_test_label.npy".format(self.data_name),
         )
 
-        self.path_index_timeseries_analysis = os.path.join(
+        self.path_indices_timeseries_analysis = os.path.join(
             self.path_data_name_directory,
-            "{}_index_timeseries_analysis.npy".format(self.data_name),
+            "{}_indices_timeseries_analysis.csv".format(self.data_name),
         )
 
     def read_data(self):
@@ -134,16 +135,6 @@ class DataPreprocessing:
                     )
                     fs, ts = wavfile.read(path_n_ts)
 
-                    # pad ts to have 12 seconds
-                    if len(ts) < self.len_ts_max:
-                        len_pad = self.len_ts_max - len(ts)
-                        ts = np.pad(
-                            ts,
-                            pad_width=(len_pad // 2, len_pad // 2),
-                            mode="constant",
-                            constant_values=0,
-                        )
-
                     # label attribute as string
                     label_attribute = f"{machine}_{domain}_{attribute}"
 
@@ -166,6 +157,16 @@ class DataPreprocessing:
                             len(ts),
                         ]
                     )
+
+                    # pad ts to have 12 seconds
+                    if len(ts) < self.len_ts_max:
+                        len_pad = self.len_ts_max - len(ts)
+                        ts = np.pad(
+                            ts,
+                            pad_width=(len_pad // 2, len_pad // 2),
+                            mode="constant",
+                            constant_values=0,
+                        )
 
                     # append to data list
                     label = [idx_ts, label_attribute_number, label_condition_number]
@@ -226,13 +227,74 @@ class DataPreprocessing:
 
         return data_timeseries_information
 
-    def index_timeseries_analyis(self):
+    def indices_timeseries_analyis(self):
         """
         create the csv that analysis type_machine_domain_condition the index of each time series
         """
-        tiemseries_information = self.timeseries_information()
-        if not os.path.exists(self.path_index_timeseries_analysis):
-            pass
+        # get the information from timeseries_information
+        timeseries_information = self.timeseries_information().to_numpy()
+        indices_timeseries = timeseries_information[:, 0]
+        name_timeseries = timeseries_information[:, 1]
+        condition_timeseries = timeseries_information[:, 3]
+
+        # dict indices_timeseries_analyis
+        indices_timeseries_analysis = {}
+
+        # check if exsist
+        if not os.path.exists(self.path_indices_timeseries_analysis):
+            for t in self.type_data:
+                for d in self.domain_data:
+                    for c in self.label_condition_number.keys():
+
+                        # condition as number
+                        c_number = self.label_condition_number[c]
+
+                        # key of the dict indices_timeseries_analyis
+                        key = "{}_{}_{}".format(t, d, c)
+                        indices_timeseries_analysis[key] = [
+                            i
+                            for i in indices_timeseries
+                            if t in name_timeseries[i]
+                            and d in name_timeseries[i]
+                            and c_number == condition_timeseries[i]
+                        ]
+
+                        for m in self.machines:
+                            if t == "test":
+                                # key of the dict indices_timeseries_analyis
+                                key = "{}_{}_{}".format(t, m, d)
+                                indices_timeseries_analysis[key] = [
+                                    i
+                                    for i in indices_timeseries
+                                    if t in name_timeseries[i]
+                                    and m in name_timeseries[i]
+                                    and d in name_timeseries[i]
+                                ]
+
+            # delete len keys == 0
+            maxlen_value = max([len(i) for i in indices_timeseries_analysis.values()])
+
+            # filter out keys with empty lists values
+            indices_timeseries_analysis = {
+                k: v for k, v in indices_timeseries_analysis.items() if len(v) > 0
+            }
+
+            for k, v in indices_timeseries_analysis.items():
+                while len(v) < maxlen_value:
+                    v.append(None)
+                indices_timeseries_analysis[k] = v
+
+            # convert to data frame and save it as .csv
+            indices_timeseries_analysis = pd.DataFrame(indices_timeseries_analysis)
+            indices_timeseries_analysis.to_csv(
+                self.path_indices_timeseries_analysis, index=False
+            )
+
+        else:
+            indices_timeseries_analysis = pd.read_csv(
+                self.path_indices_timeseries_analysis
+            )
+        return indices_timeseries_analysis
 
     def load_data(self):
         """
@@ -340,6 +402,10 @@ if __name__ == "__main__":
 
     # data_logmel = data_preprocessing.log_melspectrogram(data=train_data)
     # print("data_logmel shape:", data_logmel.shape)
+
+    # indices_timeseries_analyis = data_preprocessing.indices_timeseries_analyis()
+    # print("indices_timeseries_analyis:", indices_timeseries_analyis)
+    # print("indices_timeseries_analyis keys:", indices_timeseries_analyis.keys())
 
     end = default_timer()
     print(end - start)
