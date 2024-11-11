@@ -79,7 +79,3 @@ class BEATsCustom(nn.Module):
             x = self.embedding_output(x)
 
         return x
-
-
-
-
