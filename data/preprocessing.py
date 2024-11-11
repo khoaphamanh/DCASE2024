@@ -24,6 +24,8 @@ class DataPreprocessing:
         self.path_data_name_directory = os.path.join(
             self.path_main_directory, "data", data_name
         )
+        print(self.path_data_name_directory)
+
         if not os.path.exists(self.path_data_name_directory):
             import download_data
 
@@ -55,40 +57,38 @@ class DataPreprocessing:
 
         # dict, list path
         self.path_label_unique = os.path.join(
-            self.path_data_directory,
-            self.data_name,
+            self.path_data_name_directory,
             "{}_label_unique.csv".format(self.data_name),
         )
         # print("self:", self.path_label_unique)
         self.path_data_timeseries_information = os.path.join(
-            self.path_data_directory,
-            self.data_name,
+            self.path_data_name_directory,
             "{}_data_timeseries_information.csv".format(self.data_name),
         )
         self.path_train_data = os.path.join(
-            self.path_data_directory,
-            self.data_name,
+            self.path_data_name_directory,
             "{}_train_data.npy".format(self.data_name),
         )
 
         self.path_train_label = os.path.join(
-            self.path_data_directory,
-            self.data_name,
+            self.path_data_name_directory,
             "{}_train_label.npy".format(self.data_name),
         )
 
         self.path_test_data = os.path.join(
-            self.path_data_directory,
-            self.data_name,
+            self.path_data_name_directory,
             "{}_test_data.npy".format(self.data_name),
         )
 
         self.path_test_label = os.path.join(
-            self.path_data_directory,
-            self.data_name,
+            self.path_data_name_directory,
             "{}_test_label.npy".format(self.data_name),
         )
-        # print("self:", self.path_data_timeseries_information)
+
+        self.path_index_timeseries_analysis = os.path.join(
+            self.path_data_name_directory,
+            "{}_index_timeseries_analysis.npy".format(self.data_name),
+        )
 
     def read_data(self):
         """
@@ -205,7 +205,9 @@ class DataPreprocessing:
         )
 
     def label_unique(self):
-        # load label unique as csv, label number and their name
+        """
+        load label unique as csv, label number and their name
+        """
         if not os.path.exists(self.path_label_unique):
             self.read_data()
 
@@ -214,7 +216,9 @@ class DataPreprocessing:
         return label_unique
 
     def timeseries_information(self):
-        # load data_timeseries_information as csv, index and the path of each timeseries in dataset
+        """
+        load data_timeseries_information as csv, index and the path of each timeseries in dataset
+        """
         if not os.path.exists(self.path_data_timeseries_information):
             self.read_data()
 
@@ -222,8 +226,18 @@ class DataPreprocessing:
 
         return data_timeseries_information
 
+    def index_timeseries_analyis(self):
+        """
+        create the csv that analysis type_machine_domain_condition the index of each time series
+        """
+        tiemseries_information = self.timeseries_information()
+        if not os.path.exists(self.path_index_timeseries_analysis):
+            pass
+
     def load_data(self):
-        # load data .pkl file as list
+        """
+        load data .pkl file as list
+        """
         check_data_exists = [
             os.path.exists(self.path_train_data),
             os.path.exists(self.path_train_label),
@@ -247,10 +261,6 @@ class DataPreprocessing:
             test_label,
         )
 
-    def index_timeseries_analyis(self):
-        # create the csv that analysis type_machine_domain_condition the index of each time series
-        pass
-
     def log_melspectrogram(
         self,
         data,
@@ -259,7 +269,9 @@ class DataPreprocessing:
         n_mels=128,
         dB=True,
     ):
-        # convert data to log melspectrogram
+        """
+        convert data to log melspectrogram
+        """
         data_logmel = []
         for ts in data:
             ms = librosa.feature.melspectrogram(
@@ -311,8 +323,8 @@ if __name__ == "__main__":
     # label_unique = data_preprocessing.label_unique()
     # print("label_unique:", label_unique)
 
-    data_timeseries_information = data_preprocessing.timeseries_information()
-    print("data_timeseries_information:", data_timeseries_information)
+    # data_timeseries_information = data_preprocessing.timeseries_information()
+    # print("data_timeseries_information:", data_timeseries_information)
 
     # path_label_unique = data_preprocessing.path_label_unique
     # print("path_label_unique:", path_label_unique)
@@ -320,11 +332,11 @@ if __name__ == "__main__":
     # path_train_data = data_preprocessing.path_train_data
     # print("path_train_data:", path_train_data)
 
-    train_data, train_label, test_data, test_label = data_preprocessing.load_data()
-    print("train_data:", train_data.shape)
-    print("train_label:", train_label.shape)
-    print("test_data:", test_data.shape)
-    print("test_label:", test_label.shape)
+    # train_data, train_label, test_data, test_label = data_preprocessing.load_data()
+    # print("train_data:", train_data.shape)
+    # print("train_label:", train_label.shape)
+    # print("test_data:", test_data.shape)
+    # print("test_label:", test_label.shape)
 
     # data_logmel = data_preprocessing.log_melspectrogram(data=train_data)
     # print("data_logmel shape:", data_logmel.shape)
