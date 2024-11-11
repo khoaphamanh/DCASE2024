@@ -241,7 +241,7 @@ class DataPreprocessing:
             np.load(self.path_test_label),
         ]
 
-        return train_data, train_label, test_data, test_label
+        return train_data.astype(float), train_label, test_data.astype(float), test_label
 
     def log_melspectrogram(
         self,
@@ -251,9 +251,7 @@ class DataPreprocessing:
         n_mels=128,
         dB=True,
     ):
-        # convert to float array
-        data = data.astype(float)
-
+        #convert data to log melspectrogram
         data_logmel = []
         for ts in data:
             ms = librosa.feature.melspectrogram(
