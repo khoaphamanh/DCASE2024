@@ -102,11 +102,13 @@ class DataPreprocessing:
         test_label = []
 
         # dict for data timeseries information with syntax [index,name_ts,label_attributt, label_condition ]
-        data_timeseries_information = []
+        timeseries_information = []
+
+        # list of unique labels
         label_unique = []
 
         # loop type train test
-        idx_data = 0  # index of the each timeseries, from 0 to 8399 (total 8400)
+        idx_ts = 0  # index of the each timeseries, from 0 to 8399 (total 8400)
 
         for t in self.type_data:
 
@@ -155,9 +157,9 @@ class DataPreprocessing:
                     # append to data_timeseries_information
                     label_attribute_number = label_unique.index(label_attribute)
                     path_n_ts = os.path.join(machine, n_ts)
-                    data_timeseries_information.append(
+                    timeseries_information.append(
                         [
-                            idx_data,
+                            idx_ts,
                             path_n_ts,
                             label_attribute_number,
                             label_condition_number,
@@ -166,19 +168,16 @@ class DataPreprocessing:
                     )
 
                     # append to data list
+                    label = [idx_ts, label_attribute_number, label_condition_number]
                     if t == "train":
                         train_data.append(ts)
-                        train_label.append(
-                            [label_attribute_number, label_condition_number]
-                        )
+                        train_label.append(label)
                     elif t == "test":
                         test_data.append(ts)
-                        test_label.append(
-                            [label_attribute_number, label_condition_number]
-                        )
+                        test_label.append(label)
 
                     # next index
-                    idx_data = idx_data + 1
+                    idx_ts = idx_ts + 1
 
                 # break
             # break
@@ -195,18 +194,18 @@ class DataPreprocessing:
         label_unique = pd.DataFrame(label_unique, columns=column_names)
 
         column_names = ["Index", "Name", "Attribute", "Condition", "Length"]
-        data_timeseries_information = pd.DataFrame(
-            data_timeseries_information, columns=column_names
+        timeseries_information = pd.DataFrame(
+            timeseries_information, columns=column_names
         )
 
         # save the data frame to data name directory
         label_unique.to_csv(self.path_label_unique, index=False)
-        data_timeseries_information.to_csv(
+        timeseries_information.to_csv(
             self.path_data_timeseries_information, index=False
         )
 
     def label_unique(self):
-        # load label unique as csv
+        # load label unique as csv, label number and their name
         if not os.path.exists(self.path_label_unique):
             self.read_data()
 
@@ -214,8 +213,8 @@ class DataPreprocessing:
 
         return label_unique
 
-    def data_timeseries_information(self):
-        # load data_timeseries_information as csv
+    def timeseries_information(self):
+        # load data_timeseries_information as csv, index and the path of each timeseries in dataset
         if not os.path.exists(self.path_data_timeseries_information):
             self.read_data()
 
@@ -241,7 +240,16 @@ class DataPreprocessing:
             np.load(self.path_test_label),
         ]
 
-        return train_data.astype(float), train_label, test_data.astype(float), test_label
+        return (
+            train_data.astype(float),
+            train_label,
+            test_data.astype(float),
+            test_label,
+        )
+
+    def index_timeseries_analyis(self):
+        # create the csv that analysis type_machine_domain_condition the index of each time series
+        pass
 
     def log_melspectrogram(
         self,
@@ -251,7 +259,7 @@ class DataPreprocessing:
         n_mels=128,
         dB=True,
     ):
-        #convert data to log melspectrogram
+        # convert data to log melspectrogram
         data_logmel = []
         for ts in data:
             ms = librosa.feature.melspectrogram(
@@ -303,8 +311,8 @@ if __name__ == "__main__":
     # label_unique = data_preprocessing.label_unique()
     # print("label_unique:", label_unique)
 
-    # data_timeseries_information = data_preprocessing.data_timeseries_information()
-    # print("data_timeseries_information:", data_timeseries_information)
+    data_timeseries_information = data_preprocessing.timeseries_information()
+    print("data_timeseries_information:", data_timeseries_information)
 
     # path_label_unique = data_preprocessing.path_label_unique
     # print("path_label_unique:", path_label_unique)
@@ -313,13 +321,13 @@ if __name__ == "__main__":
     # print("path_train_data:", path_train_data)
 
     train_data, train_label, test_data, test_label = data_preprocessing.load_data()
-    # print("train_data:", train_data.shape)
-    # print("train_label:", train_label.shape)
-    # print("test_data:", test_data.shape)
-    # print("test_label:", test_label.shape)
+    print("train_data:", train_data.shape)
+    print("train_label:", train_label.shape)
+    print("test_data:", test_data.shape)
+    print("test_label:", test_label.shape)
 
-    data_logmel = data_preprocessing.log_melspectrogram(data=train_data)
-    print("data_logmel shape:", data_logmel.shape)
+    # data_logmel = data_preprocessing.log_melspectrogram(data=train_data)
+    # print("data_logmel shape:", data_logmel.shape)
 
     end = default_timer()
     print(end - start)
