@@ -75,12 +75,78 @@ class AnomalyDetection:
         # conver to tensor dataset
         return train_data, train_label, test_data, test_label
 
-    def smote(self):
+    def augmentation(self, train_data_aug, train_label_aug, k_smote=5):
+        """
+        function to do augmentation for the instances that have fewer than k_smote
+        """
+        # each label will have k_smote + 1 instances
+        train_data_aug_smote = []
+        train_label_aug_smote = []
+
+        label_attribute_aug_unique, label_attribute_aug_counts = np.unique(
+            train_label_aug, return_counts=True
+        )
+        print("label_attribute_aug_unique:", label_attribute_aug_unique)
+        print("label_attribute_aug_counts:", label_attribute_aug_counts)
+        # for i in range(len(train_data_aug)):
+        #     for j in range(k_smote+1):
+
+    def smote(self, k_smote=5):
+        """
+        function to use directly smote on instances that have more than k_smote instances each label.
+        if not than we use audiomenations first on the instances that have fewer instances than k_smote each label
+        then together use them with smote
+        """
+        # load data attribute
         train_data, train_label, test_data, test_label = self.load_data_attribute()
-        train_label = train_label[:, 1]
-        smote = SMOTE(random_state=self.seed)
-        train_data, train_label = smote.fit_resample(train_data, train_label)
-        return train_data, train_label, test_data, test_label
+
+        # find the unique labels and their counts
+        label_train_attribute = train_label[:, 1]
+        label_train_attribute_unique, label_train_attribute_counts = np.unique(
+            label_train_attribute, return_counts=True
+        )
+        print("label_train_unique:", label_train_attribute_unique)
+        print("label_train_counts:", label_train_attribute_counts)
+
+        # sort data and labels with fewer or more than k_smote
+        train_data_smote = []
+        train_label_smote = []
+        train_data_aug = []
+        train_label_aug = []
+
+        for i in range(len(train_data)):
+            if label_train_attribute_counts[label_train_attribute[i]] > k_smote:
+                train_data_smote.append(train_data[i])
+                train_label_smote.append(label_train_attribute[i])
+            else:
+                train_data_aug.append(train_data[i])
+                train_label_aug.append(label_train_attribute[i])
+
+        self.augmentation(
+            train_data_aug=train_data_aug,
+            train_label_aug=train_label_aug,
+            k_smote=k_smote,
+        )
+
+        # label_train_attribute_unique, label_train_attribute_counts = np.unique(
+        #     train_label_smote, return_counts=True
+        # )
+
+        # print("label_train_unique:", label_train_attribute_unique)
+        # print("label_train_counts:", label_train_attribute_counts)
+
+        # label_train_attribute_unique, label_train_attribute_counts = np.unique(
+        #     train_label_aug, return_counts=True
+        # )
+
+        # print("label_train_unique:", label_train_attribute_unique)
+        # print("label_train_counts:", label_train_attribute_counts)
+
+        # smote = SMOTE(random_state=self.seed)
+        # train_data, label_train_attribute = smote.fit_resample(
+        #     train_data, label_train_attribute
+        # )
+        # return train_data, label_train_attribute, test_data, test_label
 
     def load_model(self, input_size=12, embedding_dim=None):
         # function to load model beats
@@ -109,9 +175,25 @@ if __name__ == "__main__":
     # out = asp(a)
     # print("out shape:", out.shape)
 
-    # a = torch.randn(2, 12 * 16000)
-    # model = BEATsCustom(path_state_dict=path_beat_iter3_state_dict, input_size=12,embedding_dim=1024)
+    # a = torch.randn(8, 12 * 16000)
+
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # a = a.to(device)
+
+    # model = BEATsCustom(
+    #     path_state_dict=path_beat_iter3_state_dict, input_size=12, embedding_dim=1024
+    # )
+    # model = model.to(device)
+
     # out = model(a)
+    # out = out.to(device)
+    # true = torch.rand_like(out)
+    # optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    # criterion = nn.MSELoss()  # Mean Squared Error loss (regression)
+    # loss = criterion(out, true)
+    # loss.backward()
+    # optimizer.step()
+
     # print("out shape:", out.shape)
 
     # summary(model)
@@ -124,24 +206,25 @@ if __name__ == "__main__":
     # print("train_data", test_data.dtype)
     # print("test_label:", test_label.shape)
 
-    train_data, train_label, test_data, test_label = ad.load_data_attribute()
+    # train_data, train_label, test_data, test_label = ad.load_data_attribute()
 
-    print("train_data:", train_data.shape)
-    print("train_data", train_data.dtype)
-    print("train_label:", train_label.shape)
-    print("test_data:", test_data.shape)
-    print("train_data", test_data.dtype)
-    print("test_label:", test_label.shape)
+    # print("train_data:", train_data.shape)
+    # print("train_data", train_data.dtype)
+    # print("train_label:", train_label.shape)
+    # print("test_data:", test_data.shape)
+    # print("train_data", test_data.dtype)
+    # print("test_label:", test_label.shape)
 
-    label_train_unique, count = np.unique(train_label[:, 1], return_counts=True)
-    print("label_train_unique:", label_train_unique)
-    print("count:", count)
+    # label_train_unique, count = np.unique(train_label[:, 1], return_counts=True)
+    # print("label_train_unique:", label_train_unique)
+    # print("count:", count)
 
-    label_test_unique, count = np.unique(test_label[:, 1], return_counts=True)
-    print("label_test_unique:", label_test_unique)
-    print("count:", count)
+    # label_test_unique, count = np.unique(test_label[:, 1], return_counts=True)
+    # print("label_test_unique:", label_test_unique)
+    # print("count:", count)
 
     # train_data, train_label, test_data, test_label = ad.smote()
+    a = ad.smote()
 
     # print("train_data:", train_data.shape)
     # print("train_data", train_data.dtype)
