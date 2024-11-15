@@ -5,6 +5,9 @@ import pandas as pd
 import librosa
 import sys
 from tqdm import tqdm
+from audiomentations import Compose, AddGaussianNoise, TimeStretch, PitchShift, Shift
+from imblearn.over_sampling import SMOTE
+import random
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -12,9 +15,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # data preprocessing
 class DataPreprocessing:
-    def __init__(self, data_name):
+    def __init__(self, data_name,seed = 1998):
 
         # directory information
+        self.seed = seed
         self.data_name = data_name
         self.path_preprocessing = os.path.abspath(__file__)
         self.path_data_directory = os.path.dirname(self.path_preprocessing)
@@ -48,24 +52,30 @@ class DataPreprocessing:
 
         # timeseries information
         self.fs = 16000
-        self.machine_no_attribute = ["slider", "gearbox", "ToyTrain"]
-        self.duration = {
-            tuple(i for i in self.machines if i not in ["ToyCar", "ToyTrain"]): 10,
-            ("ToyCar", "ToyTrain"): 12,
-        }
-        self.len_ts_max = self.fs * max(self.duration.values())
+        if data_name == "develop":
+            self.machine_no_attribute = ["slider", "gearbox", "ToyTrain"]
+            self.duration = {
+                tuple(i for i in self.machines if i not in ["ToyCar", "ToyTrain"]): 10,
+                ("ToyCar", "ToyTrain"): 12,
+            }
+            self.len_ts_max = self.fs * max(self.duration.values())
         self.label_condition_number = {"normal": 0, "anomaly": 1}
 
-        # dict, list path
+        # path data information
         self.path_label_unique = os.path.join(
             self.path_data_name_directory,
             "{}_label_unique.csv".format(self.data_name),
         )
-        # print("self:", self.path_label_unique)
         self.path_data_timeseries_information = os.path.join(
             self.path_data_name_directory,
             "{}_data_timeseries_information.csv".format(self.data_name),
         )
+        self.path_indices_timeseries_analysis = os.path.join(
+            self.path_data_name_directory,
+            "{}_indices_timeseries_analysis.csv".format(self.data_name),
+        )
+        
+        #path raw data
         self.path_train_data = os.path.join(
             self.path_data_name_directory,
             "{}_train_data.npy".format(self.data_name),
@@ -86,12 +96,11 @@ class DataPreprocessing:
             "{}_test_label.npy".format(self.data_name),
         )
 
-        self.path_indices_timeseries_analysis = os.path.join(
-            self.path_data_name_directory,
-            "{}_indices_timeseries_analysis.csv".format(self.data_name),
-        )
+        #path data smote
+        self.train_data_smote = os.path.join(self.path_data_name_directory,"{}_train_data_smote.npy".format(data_name))
+        self.train_label_smote = os.path.join(self.path_data_name_directory,"{}_train_label_smote.npy".format(data_name))
 
-    def read_data(self):
+    def read_raw_data(self):
         """
         Read features, labels from .wav files
         """
@@ -180,9 +189,6 @@ class DataPreprocessing:
                     # next index
                     idx_ts = idx_ts + 1
 
-                # break
-            # break
-
         # save train test data list
         np.save(self.path_train_data, train_data)
         np.save(self.path_train_label, train_label)
@@ -210,7 +216,7 @@ class DataPreprocessing:
         load label unique as csv, label number and their name
         """
         if not os.path.exists(self.path_label_unique):
-            self.read_data()
+            self.read_raw_data()
 
         label_unique = pd.read_csv(self.path_label_unique)
 
@@ -221,7 +227,7 @@ class DataPreprocessing:
         load data_timeseries_information as csv, index and the path of each timeseries in dataset
         """
         if not os.path.exists(self.path_data_timeseries_information):
-            self.read_data()
+            self.read_raw_data()
 
         data_timeseries_information = pd.read_csv(self.path_data_timeseries_information)
 
@@ -296,7 +302,7 @@ class DataPreprocessing:
             )
         return indices_timeseries_analysis
 
-    def load_data(self):
+    def load_raw_data(self):
         """
         load data .pkl file as list
         """
@@ -307,7 +313,7 @@ class DataPreprocessing:
             os.path.exists(self.path_test_label),
         ]
         if not all(check_data_exists):
-            self.read_data()
+            self.read_raw_data()
 
         train_data, train_label, test_data, test_label = [
             np.load(self.path_train_data),
@@ -323,6 +329,149 @@ class DataPreprocessing:
             test_label,
         )
 
+    def load_data_attribute (self):
+        """
+        load data with attribute as label (some bearing labels in test data that not in train data will not included
+        """
+        # load raw data
+        train_data, train_label, test_data, test_label = self.load_raw_data()
+        
+        # find the unique label in train data
+        label_train_attribute = train_label[:, 1]
+        label_train_attribute_unique = np.unique(label_train_attribute)
+        label_test_attribute = test_label[:, 1]
+        index_label_unique_attribute_in_test = [
+            i
+            for i in range(len(test_data))
+            if label_test_attribute[i] in label_train_attribute_unique
+        ]
+
+        test_data = test_data[index_label_unique_attribute_in_test]
+        test_label = test_label[index_label_unique_attribute_in_test]
+
+        # conver to tensor dataset
+        return train_data, train_label, test_data, test_label
+    
+    def augmentation(self, train_data_aug, train_label_aug, k_smote=5):
+        """
+        function to do augmentation for the instances that have fewer than k_smote
+        choose a random instance from a label, do one augmentation, keep doing like this until reach the k_smote+1 instances
+        """
+
+        # augmentation method
+        augmentation = Compose(
+            [AddGaussianNoise(), TimeStretch(), PitchShift(), Shift()]
+        )
+
+        # each label will have k_smote + 1 instances
+        train_data_aug_smote = []
+        train_label_aug_smote = []
+
+        # get the unique and counts of the train_data_aug and train_label_aug
+        label_attribute_aug_unique, label_attribute_aug_counts = np.unique(
+            train_label_aug, return_counts=True
+        )
+
+        for label_unique, label_counts in zip(
+            label_attribute_aug_unique, label_attribute_aug_counts
+        ):
+
+            # total number of ts
+            total_number_ts = label_counts
+
+            # indices for each label
+            indices = np.where(train_label_aug == label_unique)[0]
+            print(label_unique)
+            print("indices:", indices)
+
+            while total_number_ts <= k_smote:
+
+                # get the random index for each label
+                index_random = np.random.choice(indices)
+                print("index_random:", index_random)
+
+                # get the ts
+                ts_original = train_data_aug[index_random]
+
+                # augmented ts
+                ts_augmented = augmentation(ts_original, sample_rate=self.fs)
+
+                # increase the total_ts_number
+                total_number_ts = total_number_ts + 1
+
+                # append to augmentation list
+                train_data_aug_smote.append(ts_augmented)
+                train_label_aug_smote.append(label_unique)
+
+        print()
+        # stack all of them
+        train_data_aug = np.vstack((train_data_aug, train_data_aug_smote))
+        train_label_aug = np.concatenate((train_label_aug, train_label_aug_smote))
+
+        return train_data_aug, train_label_aug
+    
+    def smote(self,k_smote = 5):
+        """
+        load data smote
+        """
+        # check data smote exsist
+
+        # load data attribute
+        train_data, train_label, test_data, test_label = self.load_data_attribute()
+
+        # find the unique labels and their counts
+        label_train_attribute = train_label[:, 1]
+        label_train_attribute_unique, label_train_attribute_counts = np.unique(
+            label_train_attribute, return_counts=True
+        )
+        print("label_train_unique:", label_train_attribute_unique)
+        print("label_train_counts:", label_train_attribute_counts)
+
+        # sort data and labels with fewer or more than k_smote
+        train_data_smote = []
+        train_label_smote = []
+        train_data_aug = []
+        train_label_aug = []
+
+        for i in range(len(train_data)):
+            if label_train_attribute_counts[label_train_attribute[i]] > k_smote:
+                train_data_smote.append(train_data[i])
+                train_label_smote.append(label_train_attribute[i])
+            else:
+                train_data_aug.append(train_data[i])
+                train_label_aug.append(label_train_attribute[i])
+
+        train_data_aug, train_label_aug = self.augmentation(
+            train_data_aug=train_data_aug,
+            train_label_aug=train_label_aug,
+            k_smote=k_smote,
+        )
+
+        # print("train_data_smote shape:", np.array(train_data_smote).shape)
+        # print("train_label_smote shape:", np.array(train_label_smote).shape)
+
+        # print("train_data_aug shape:", train_data_aug.shape)
+        # print("train_label_aug shape:", train_label_aug.shape)
+
+        # train_data_smote = np.vstack((train_data_smote, train_data_aug))
+        # print("train_data_smote shape:", train_data_smote.shape)
+        # train_label_smote = np.concatenate((train_label_smote, train_label_aug))
+        # print("train_label_smote shape:", train_label_smote.shape)
+
+        # label_train_attribute_unique, label_train_attribute_counts = np.unique(
+        #     train_label_smote, return_counts=True
+        # )
+
+        # print("label_train_unique:", label_train_attribute_unique)
+        # print("label_train_counts:", label_train_attribute_counts)
+
+        # smote = SMOTE(random_state=self.seed, k_neighbors=k_smote)
+        # train_data_smote, train_label_smote = smote.fit_resample(
+        #     train_data_smote,
+        #     train_label_smote,
+        # )
+        # return train_data_smote, train_label_smote
+        
     def log_melspectrogram(
         self,
         data,
@@ -350,11 +499,14 @@ class DataPreprocessing:
 if __name__ == "__main__":
 
     from timeit import default_timer
+    seed = 1998
 
+    np.random.seed(seed)
+    random.seed(seed)
     start = default_timer()
     print()
     data_name = "develop"
-    data_preprocessing = DataPreprocessing(data_name=data_name)
+    data_preprocessing = DataPreprocessing(data_name=data_name,seed=seed)
 
     # path_models_directory = data_preprocessing.path_models_directory
     # print("path_models_directory:", path_models_directory)
@@ -407,5 +559,13 @@ if __name__ == "__main__":
     # print("indices_timeseries_analyis:", indices_timeseries_analyis)
     # print("indices_timeseries_analyis keys:", indices_timeseries_analyis.keys())
 
+    # train_data, train_label, test_data, test_label = data_preprocessing.load_data_attritbute()
+    # print("train_data:", train_data.shape)
+    # print("train_label:", train_label.shape)
+    # print("test_data:", test_data.shape)
+    # print("test_label:", test_label.shape)
+    
+    data_preprocessing.smote()
+    
     end = default_timer()
     print(end - start)

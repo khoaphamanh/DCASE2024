@@ -10,6 +10,8 @@ import os
 import numpy as np
 from loss import AdaCosLoss
 from torchinfo import summary
+from audiomentations import Compose, AddGaussianNoise, TimeStretch, PitchShift, Shift
+import random
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -36,7 +38,11 @@ class AnomalyDetection:
 
         # preprocessing class
         self.data_preprocessing = DataPreprocessing(data_name)
+        self.fs = self.data_preprocessing.fs
 
+        #path 
+        self.path_data_smote = 1
+                
         # configuration of the model
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.n_gpus = torch.cuda.device_count()
@@ -48,7 +54,7 @@ class AnomalyDetection:
         """
         # load raw data as numpy
         train_data, train_label, test_data, test_label = (
-            self.data_preprocessing.load_data()
+            self.data_preprocessing.load_raw_data()
         )
         return train_data, train_label, test_data, test_label
 
@@ -78,18 +84,58 @@ class AnomalyDetection:
     def augmentation(self, train_data_aug, train_label_aug, k_smote=5):
         """
         function to do augmentation for the instances that have fewer than k_smote
+        choose a random instance from a label, do one augmentation, keep doing like this until reach the k_smote+1 instances
         """
+
+        # augmentation method
+        augmentation = Compose(
+            [AddGaussianNoise(), TimeStretch(), PitchShift(), Shift()]
+        )
+
         # each label will have k_smote + 1 instances
         train_data_aug_smote = []
         train_label_aug_smote = []
 
+        # get the unique and counts of the train_data_aug and train_label_aug
         label_attribute_aug_unique, label_attribute_aug_counts = np.unique(
             train_label_aug, return_counts=True
         )
         print("label_attribute_aug_unique:", label_attribute_aug_unique)
         print("label_attribute_aug_counts:", label_attribute_aug_counts)
-        # for i in range(len(train_data_aug)):
-        #     for j in range(k_smote+1):
+
+        for label_unique, label_counts in zip(
+            label_attribute_aug_unique, label_attribute_aug_counts
+        ):
+
+            # total number of ts
+            total_number_ts = label_counts
+
+            # indices for each label
+            indices = np.where(train_label_aug == label_unique)[0]
+
+            while total_number_ts <= k_smote:
+
+                # get the random index for each label
+                index_random = np.random.choice(indices)
+
+                # get the ts
+                ts_original = train_data_aug[index_random]
+
+                # augmented ts
+                ts_augmented = augmentation(ts_original, sample_rate=self.fs)
+
+                # increase the total_ts_number
+                total_number_ts = total_number_ts + 1
+
+                # append to augmentation list
+                train_data_aug_smote.append(ts_augmented)
+                train_label_aug_smote.append(label_unique)
+
+        # stack all of them
+        train_data_aug = np.vstack((train_data_aug, train_data_aug_smote))
+        train_label_aug = np.concatenate((train_label_aug, train_label_aug_smote))
+
+        return train_data_aug, train_label_aug
 
     def smote(self, k_smote=5):
         """
@@ -97,56 +143,7 @@ class AnomalyDetection:
         if not than we use audiomenations first on the instances that have fewer instances than k_smote each label
         then together use them with smote
         """
-        # load data attribute
-        train_data, train_label, test_data, test_label = self.load_data_attribute()
-
-        # find the unique labels and their counts
-        label_train_attribute = train_label[:, 1]
-        label_train_attribute_unique, label_train_attribute_counts = np.unique(
-            label_train_attribute, return_counts=True
-        )
-        print("label_train_unique:", label_train_attribute_unique)
-        print("label_train_counts:", label_train_attribute_counts)
-
-        # sort data and labels with fewer or more than k_smote
-        train_data_smote = []
-        train_label_smote = []
-        train_data_aug = []
-        train_label_aug = []
-
-        for i in range(len(train_data)):
-            if label_train_attribute_counts[label_train_attribute[i]] > k_smote:
-                train_data_smote.append(train_data[i])
-                train_label_smote.append(label_train_attribute[i])
-            else:
-                train_data_aug.append(train_data[i])
-                train_label_aug.append(label_train_attribute[i])
-
-        self.augmentation(
-            train_data_aug=train_data_aug,
-            train_label_aug=train_label_aug,
-            k_smote=k_smote,
-        )
-
-        # label_train_attribute_unique, label_train_attribute_counts = np.unique(
-        #     train_label_smote, return_counts=True
-        # )
-
-        # print("label_train_unique:", label_train_attribute_unique)
-        # print("label_train_counts:", label_train_attribute_counts)
-
-        # label_train_attribute_unique, label_train_attribute_counts = np.unique(
-        #     train_label_aug, return_counts=True
-        # )
-
-        # print("label_train_unique:", label_train_attribute_unique)
-        # print("label_train_counts:", label_train_attribute_counts)
-
-        # smote = SMOTE(random_state=self.seed)
-        # train_data, label_train_attribute = smote.fit_resample(
-        #     train_data, label_train_attribute
-        # )
-        # return train_data, label_train_attribute, test_data, test_label
+        return self.data_preprocessing.smote(k_smote = k_smote)
 
     def load_model(self, input_size=12, embedding_dim=None):
         # function to load model beats
@@ -159,76 +156,93 @@ class AnomalyDetection:
 
 
 # run this script
-if __name__ == "__main__":
-    seed = 1998
-    develop_name = "develop"
-    ad = AnomalyDetection(data_name=develop_name, seed=seed)
+# if __name__ == "__main__":
+    
+#create the seed
+seed = 1998
+np.random.seed(seed)
+torch.manual_seed(seed)
+random.seed(seed)
 
-    path_beat_iter3_state_dict = ad.path_beat_iter3_state_dict
-    # print("path_beat_iter3_state_dict:", path_beat_iter3_state_dict)
+develop_name = "develop"
+ad = AnomalyDetection(data_name=develop_name, seed=seed)
 
-    # model = BEATsCustom(path_state_dict=path_beat_iter3_state_dict)
+path_beat_iter3_state_dict = ad.path_beat_iter3_state_dict
+# print("path_beat_iter3_state_dict:", path_beat_iter3_state_dict)
 
-    # a = torch.randn(2, 496, 768)
-    # asp = AttentiveStatisticsPooling(input_size=10)
+# model = BEATsCustom(path_state_dict=path_beat_iter3_state_dict)
 
-    # out = asp(a)
-    # print("out shape:", out.shape)
+# a = torch.randn(2, 496, 768)
+# asp = AttentiveStatisticsPooling(input_size=10)
 
-    # a = torch.randn(8, 12 * 16000)
+# out = asp(a)
+# print("out shape:", out.shape)
 
-    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # a = a.to(device)
+# a = torch.randn(8, 10 * 16000)
 
-    # model = BEATsCustom(
-    #     path_state_dict=path_beat_iter3_state_dict, input_size=12, embedding_dim=1024
-    # )
-    # model = model.to(device)
+# # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# # a = a.to(device)
 
-    # out = model(a)
-    # out = out.to(device)
-    # true = torch.rand_like(out)
-    # optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-    # criterion = nn.MSELoss()  # Mean Squared Error loss (regression)
-    # loss = criterion(out, true)
-    # loss.backward()
-    # optimizer.step()
+# model = BEATsCustom(
+#     path_state_dict=path_beat_iter3_state_dict, input_size=10, embedding_dim=None
+# )
+# model = model.to(device)
 
-    # print("out shape:", out.shape)
+# out = model(a)
+# print("out shape:", out.shape)
+# out = out.to(device)
+# true = torch.rand_like(out)
+# optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+# criterion = nn.MSELoss()  # Mean Squared Error loss (regression)
+# loss = criterion(out, true)
+# loss.backward()
+# optimizer.step()
 
-    # summary(model)
+# print("out shape:", out.shape)
 
-    # train_data, train_label, test_data, test_label = ad.load_data()
-    # print("train_data:", train_data.shape)
-    # print("train_data", train_data.dtype)
-    # print("train_label:", train_label.shape)
-    # print("test_data:", test_data.shape)
-    # print("train_data", test_data.dtype)
-    # print("test_label:", test_label.shape)
+# summary(model)
 
-    # train_data, train_label, test_data, test_label = ad.load_data_attribute()
+# train_data, train_label, test_data, test_label = ad.load_data()
+# print("train_data:", train_data.shape)
+# print("train_data", train_data.dtype)
+# print("train_label:", train_label.shape)
+# print("test_data:", test_data.shape)
+# print("train_data", test_data.dtype)
+# print("test_label:", test_label.shape)
 
-    # print("train_data:", train_data.shape)
-    # print("train_data", train_data.dtype)
-    # print("train_label:", train_label.shape)
-    # print("test_data:", test_data.shape)
-    # print("train_data", test_data.dtype)
-    # print("test_label:", test_label.shape)
+# train_data, train_label, test_data, test_label = ad.load_data_attribute()
 
-    # label_train_unique, count = np.unique(train_label[:, 1], return_counts=True)
-    # print("label_train_unique:", label_train_unique)
-    # print("count:", count)
+# print("train_data:", train_data.shape)
+# print("train_data", train_data.dtype)
+# print("train_label:", train_label.shape)
+# print("test_data:", test_data.shape)
+# print("train_data", test_data.dtype)
+# print("test_label:", test_label.shape)
 
-    # label_test_unique, count = np.unique(test_label[:, 1], return_counts=True)
-    # print("label_test_unique:", label_test_unique)
-    # print("count:", count)
+# label_train_unique, count = np.unique(train_label[:, 1], return_counts=True)
+# print("label_train_unique:", label_train_unique)
+# print("count:", count)
 
-    # train_data, train_label, test_data, test_label = ad.smote()
-    a = ad.smote()
+# label_test_unique, count = np.unique(test_label[:, 1], return_counts=True)
+# print("label_test_unique:", label_test_unique)
+# print("count:", count)
 
-    # print("train_data:", train_data.shape)
-    # print("train_data", train_data.dtype)
-    # print("train_label:", train_label.shape)
-    # print("test_data:", test_data.shape)
-    # print("train_data", test_data.dtype)
-    # print("test_label:", test_label.shape)
+train_data, train_label, test_data, test_label = ad.smote()
+# train_data_smote, train_label_smote = ad.smote()
+# print("train_data_smote shape:", train_data_smote.shape)
+# print("train_label_smote shape:", train_label_smote.shape)
+
+# label_train_unique, count = np.unique(train_label_smote, return_counts=True)
+# print("label_train_unique:", label_train_unique)
+# print("count:", count)
+
+# label_test_unique, count = np.unique(test_label[:, 1], return_counts=True)
+# print("label_test_unique:", label_test_unique)
+# print("count:", count)
+
+# print("train_data:", train_data.shape)
+# print("train_data", train_data.dtype)
+# print("train_label:", train_label.shape)
+# print("test_data:", test_data.shape)
+# print("train_data", test_data.dtype)
+# print("test_label:", test_label.shape)
