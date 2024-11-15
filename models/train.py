@@ -82,6 +82,10 @@ class AnomalyDetection(DataPreprocessing):
         train_dataset_attribute = TensorDataset(
             train_dataset_attribute, train_label_attribute
         )
+
+        test_dataset_attribute = torch.tensor(test_dataset_attribute)
+        test_label_attribute = torch.tensor(test_label_attribute)
+
         test_dataset_attribute = TensorDataset(
             test_dataset_attribute, test_label_attribute
         )
@@ -116,7 +120,7 @@ class AnomalyDetection(DataPreprocessing):
             )
 
             dataloader = DataLoader(
-                dataset=dataset, batch_sampler=sampler, batch_size=batch_size
+                dataset=dataset, sampler=sampler, batch_size=batch_size
             )
 
         else:
@@ -124,7 +128,31 @@ class AnomalyDetection(DataPreprocessing):
 
         return dataloader
 
-    def anomaly_detection(self):
+    def anomaly_detection(self, batch_size, num_iterations):
+        """
+        main function to find the result
+        """
+        # load data
+        dataset_smote, train_dataset_attribute, test_dataset_attribute = (
+            self.load_dataset_tensor()
+        )
+
+        # dataloader
+        dataloader_smote = self.data_loader(
+            dataset=dataset_smote,
+            batch_size=batch_size,
+            num_iterations=num_iterations,
+            uniform_sampling=True,
+        )
+        dataloader_train_attribute = self.data_loader(
+            dataset=train_dataset_attribute, batch_size=batch_size
+        )
+        dataloader_test_attribute = self.data_loader(
+            dataset=test_dataset_attribute, batch_size=batch_size
+        )
+
+        # load model
+        model = self.load_model()
         pass
 
     def training_loop(self):
@@ -188,14 +216,14 @@ if __name__ == "__main__":
     # print("train_data", test_data.dtype)
     # print("test_label:", test_label.shape)
 
-    # train_data, train_label, test_data, test_label = ad.load_data_attribute()
+    train_data, train_label, test_data, test_label = ad.load_data_attribute()
 
-    # print("train_data:", train_data.shape)
-    # print("train_data", train_data.dtype)
-    # print("train_label:", train_label.shape)
-    # print("test_data:", test_data.shape)
-    # print("train_data", test_data.dtype)
-    # print("test_label:", test_label.shape)
+    print("train_data:", train_data.shape)
+    print("train_data", train_data.dtype)
+    print("train_label:", train_label.shape)
+    print("test_data:", test_data.shape)
+    print("train_data", test_data.dtype)
+    print("test_label:", test_label.shape)
 
     # label_train_unique, count = np.unique(train_label[:, 1], return_counts=True)
     # print("label_train_unique:", label_train_unique)
