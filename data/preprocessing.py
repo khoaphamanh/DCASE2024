@@ -63,6 +63,8 @@ class DataPreprocessing:
                 ("ToyCar", "ToyTrain"): 12,
             }
             self.len_ts_max = self.fs * max(self.duration.values())
+            self.len_ts_min = self.fs * min(self.duration.values())
+
         self.label_condition_number = {"normal": 0, "anomaly": 1}
 
         # path data information
@@ -176,14 +178,11 @@ class DataPreprocessing:
                     )
 
                     # pad ts to have 12 seconds
-                    if len(ts) < self.len_ts_max:
-                        len_pad = self.len_ts_max - len(ts)
-                        ts = np.pad(
-                            ts,
-                            pad_width=(len_pad // 2, len_pad // 2),
-                            mode="constant",
-                            constant_values=0,
+                    if len(ts) > self.len_ts_min:
+                        index_start = np.random.randint(
+                            0, len(ts) - self.len_ts_min + 1
                         )
+                        ts = ts[index_start : index_start + self.len_ts_min]
 
                     # append to data list
                     label = [idx_ts, label_attribute_number, label_condition_number]
