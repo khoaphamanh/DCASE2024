@@ -12,6 +12,8 @@ from sklearn.metrics import f1_score, confusion_matrix, accuracy_score
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 import neptune
 from torch.optim.lr_scheduler import LambdaLR
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -42,6 +44,10 @@ class AnomalyDetection(DataPreprocessing):
 
         # configuration of the model
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            self.gpu_name = torch.cuda.get_device_name(0)
+        else:
+            self.gpu_name = None
         self.n_gpus = torch.cuda.device_count()
 
     def load_model(self, input_size=12, emb_size=None):
@@ -126,6 +132,8 @@ class AnomalyDetection(DataPreprocessing):
 
     def anomaly_detection(
         self,
+        project,
+        api_token,
         k_smote,
         batch_size,
         num_instances,
@@ -137,6 +145,8 @@ class AnomalyDetection(DataPreprocessing):
         """
         main function to find the result
         """
+        # init neptune
+        run = neptune.init_run(project=project, api_token=api_token)
 
         # load data
         dataset_smote, train_dataset_attribute, test_dataset_attribute = (
@@ -165,6 +175,7 @@ class AnomalyDetection(DataPreprocessing):
         if self.n_gpus > 1:
             model = nn.DataParallel(model, device_ids=list(range(self.n_gpus)), dim=0)
         model = model.to(self.device)
+        num_params = sum(p.numel() for p in model.parameters())
 
         # loss
         if emb_size == None:
@@ -182,15 +193,38 @@ class AnomalyDetection(DataPreprocessing):
             lr very small (warmup_step + 1) to lr_max (warmup_step*2)
             default step is 1
             """
-            if step % 10 == 0:
+            if step % step_warmup == 0:
                 return 1
             else:
                 return (step % step_warmup) / step_warmup
 
         scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
 
+        # save the hyperparameters and configuration
+        hyperparameters = {}
+        hyperparameters["k_smote"] = k_smote
+        hyperparameters["batch_size"] = batch_size
+        hyperparameters["num_instances"] = num_instances
+        hyperparameters["num_iterations"] = num_instances // (
+            batch_size * step_accumulation
+        )
+        hyperparameters["learning_rate"] = learning_rate
+        hyperparameters["step_warmup"] = step_warmup
+        hyperparameters["step_accumulation"] = step_accumulation
+        hyperparameters["emb_size"] = emb_size
+        run["hyperparameters"] = hyperparameters
+
+        configuration = {}
+        configuration["seed"] = self.seed
+        configuration["num_params"] = num_params
+        configuration["n_gpus"] = self.n_gpus
+        configuration["device"] = self.device
+        configuration["gpu_name"] = self.gpu_name
+        run["configuration"] = configuration
+
         # training attribute classification
         self.training_loop(
+            run=run,
             dataloader_smote=dataloader_smote,
             model=model,
             step_accumulation=step_accumulation,
@@ -201,7 +235,10 @@ class AnomalyDetection(DataPreprocessing):
 
     def training_loop(
         self,
+        run: neptune.init_run,
         dataloader_smote: DataLoader,
+        dataloader_train_attribute: DataLoader,
+        dataloader_test_attribute: DataLoader,
         model: nn.Module,
         step_accumulation: int,
         loss: AdaCosLoss,
@@ -212,10 +249,13 @@ class AnomalyDetection(DataPreprocessing):
         training loop for smote data
         """
 
+        # step report and evaluation
+        step_eval = step_accumulation * 10
+
         # loss train
         loss_smote_total = 0
 
-        for iter, (X_smote, y_smote) in dataloader_smote:
+        for iter, (X_smote, y_smote) in enumerate(dataloader_smote):
 
             # model in traning model
             model.train()
@@ -235,25 +275,180 @@ class AnomalyDetection(DataPreprocessing):
             # update the loss
             loss_smote.backward()
 
-            # update scheduler
-            scheduler.step()
-
-            # gradient accumulated
+            # gradient accumulated and report loss
             if (iter + 1) % step_accumulation == 0:
 
                 # update model weights and zero grad
                 optimizer.step()
                 optimizer.zero_grad()
 
-            # report the loss and evaluation mode every 1000 iteration
-            if (iter + 1) % 1000 == 0:
-                loss_smote_total = loss_smote_total / 1000
+                # report loss
+                loss_smote_total = loss_smote_total / step_accumulation
                 print("loss_smote_total {}".format(loss_smote_total))
+                run["loss_smote_total"].append(loss_smote_total, step=iter)
                 loss_smote_total = 0
+
+            # update scheduler
+            scheduler.step()
+
+            # report the loss and evaluation mode every 1000 iteration
+            if (iter + 1) % step_eval == 0:
+
+                # evaluation mode for train data attribute
+                self.evaluation_mode(
+                    run=run,
+                    iter=iter,
+                    model=model,
+                    loss=loss,
+                    dataloader_attribute=dataloader_train_attribute,
+                    type_labels=["train_source_normal", "train_target_normal"],
+                )
+
+                # evaluation mode for test data attribute
+                self.evaluation_mode(
+                    run=run,
+                    iter=iter,
+                    model=model,
+                    loss=loss,
+                    dataloader_attribute=dataloader_train_attribute,
+                    type_labels=[
+                        "test_source_normal",
+                        "test_target_normal",
+                        "test_source_anomaly",
+                        "test_target_anomaly",
+                    ],
+                )
 
             print("iter", iter)
             current_lr = optimizer.param_groups[0]["lr"]
             print("current_lr:", current_lr)
+            run["current_lr"].append(current_lr, step=iter)
+
+    def evaluation_mode(
+        self,
+        run: neptune.init_run,
+        iter: int,
+        model: nn.Module,
+        loss: AdaCosLoss,
+        dataloader_attribute: DataLoader,
+        type_labels=["train_source_normal", "train_target_normal"],
+    ):
+        """
+        evaluation mode in training loop
+        """
+        # model in evaluation and no grad mode
+        model.eval()
+        loss.eval()
+
+        # saved array
+        len_train = dataloader_attribute.dataset.tensors[0].shape[0]
+        y_pred_train_label_array = np.empty(shape=(len(len_train),))
+        y_train_array = np.empty(shape=(len(len_train), 3))
+
+        with torch.no_grad():
+            for iter, (X_train, y_train) in enumerate(dataloader_attribute):
+
+                # data to device
+                X_train = X_train.to(self.device)
+
+                # forward pass
+                embedding_train = model(X_train)
+
+                # pred the label
+                y_pred_train_label = loss.pred_labels(embedding=embedding_train)
+
+                # save to array
+                y_train_array[iter * batch_size : iter * batch_size + batch_size] = (
+                    y_train.cpu().numpy()
+                )
+                y_pred_train_label_array[
+                    iter * batch_size : iter * batch_size + batch_size
+                ] = y_pred_train_label.cpu().numpy()
+
+            # calculate accuracy
+            type_data = type_labels[0].split("_")[0]
+            accuracy_type_labels = self.accuracy_calculation(
+                y_train_array=y_train_array,
+                y_pred_train_label_array=y_pred_train_label_array,
+                type_labels=type_labels,
+            )
+
+            # calculate confusion matrix
+            cm = confusion_matrix(
+                y_true=y_train_array[:, 1], y_pred=y_pred_train_label_array
+            )
+            cm_img = self.plot_confusion_matrix(cm=cm, type_data=type_data)
+
+            # save metrics in run
+            for typ_l, acc in zip(type_labels, accuracy_type_labels):
+                run["{}/accuracy_{}".format(type_data, typ_l)].append(acc, step=iter)
+
+            run["{}/confusion_matrix".format(type_data)].append(acc, step=iter)
+            plt.close()
+
+    def accuracy_calculation(
+        self,
+        y_train_array: np.array,
+        y_pred_train_label_array: np.array,
+        type_labels=["train_source_normal", "train_target_normal"],
+    ):
+        """
+        get the accuracy given y_train_array shape (index, attribute, condition)
+        and y_pred_train_label_array shape (pred_attribute)
+        """
+        # get the indices
+        indices = self.get_indices(
+            y_true_array=y_train_array,
+            type_labels=type_labels,
+        )
+        y_train_array = y_train_array[:, 1]
+
+        # calculate accuracy
+        accuracy = []
+        for idx in indices:
+            y_pred = y_pred_train_label_array[idx]
+            y_true = y_train_array[idx]
+            acc = accuracy_score(y_pred=y_pred, y_true=y_true)
+            accuracy.append(acc)
+
+        return accuracy
+
+    def get_indices(
+        self,
+        y_true_array: np.array,
+        type_labels=["train_source_normal", "train_target_normal"],
+    ):
+        """
+        get indices of the domain or condition or type data given the
+        y_train_array shape (index, attribute, condition) and y_pred_train_label_array shape (pred_attribute)
+        """
+
+        # y_true_array only consider the first column
+        y_true_array = y_true_array[:, 0]
+
+        # get the id from type_labels
+        ts_ids = [self.indices_timeseries_analysis[typ] for typ in type_labels]
+
+        # get the index of each id
+        indices = []
+        for id in ts_ids:
+            idx = np.where(np.isin(y_true_array, id))[0]
+            indices.append(idx)
+
+        return indices
+
+    def plot_confusion_matrix(self, cm, type_data="train"):
+        """
+        plot the confusion matrix
+        """
+        fig = plt.figure(figsize=(35, 16))
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False)
+        titel = "Confusion Matrix {}".format(type_data)
+        plt.title(titel, fontsize=18)
+        plt.xlabel("Predicted Labels", fontsize=15)
+        plt.ylabel("True Labels", fontsize=15)
+
+        return fig
 
 
 # run this script
@@ -377,6 +572,8 @@ if __name__ == "__main__":
     """
     test model anomaly detection
     """
+    project = "DCASE2024/wav-test"
+    api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
     k_smote = 5
     batch_size = 8
     num_instances = 320000
@@ -386,6 +583,8 @@ if __name__ == "__main__":
     emb_size = None
 
     ad.anomaly_detection(
+        project=project,
+        api_token=api_token,
         k_smote=k_smote,
         batch_size=batch_size,
         num_instances=num_instances,
