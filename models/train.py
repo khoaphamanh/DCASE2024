@@ -226,6 +226,8 @@ class AnomalyDetection(DataPreprocessing):
         self.training_loop(
             run=run,
             dataloader_smote=dataloader_smote,
+            dataloader_train_attribute=dataloader_train_attribute,
+            dataloader_test_attribute=dataloader_test_attribute,
             model=model,
             step_accumulation=step_accumulation,
             loss=loss,
@@ -250,7 +252,7 @@ class AnomalyDetection(DataPreprocessing):
         """
 
         # step report and evaluation
-        step_eval = step_accumulation * 10
+        step_eval = step_accumulation * 100
 
         # loss train
         loss_smote_total = 0
@@ -284,8 +286,7 @@ class AnomalyDetection(DataPreprocessing):
 
                 # report loss
                 loss_smote_total = loss_smote_total / step_accumulation
-                print("loss_smote_total {}".format(loss_smote_total))
-                run["loss_smote_total"].append(loss_smote_total, step=iter)
+                run["smote/loss_smote_total"].append(loss_smote_total, step=iter)
                 loss_smote_total = 0
 
             # update scheduler
@@ -310,7 +311,7 @@ class AnomalyDetection(DataPreprocessing):
                     iter=iter,
                     model=model,
                     loss=loss,
-                    dataloader_attribute=dataloader_train_attribute,
+                    dataloader_attribute=dataloader_test_attribute,
                     type_labels=[
                         "test_source_normal",
                         "test_target_normal",
@@ -319,10 +320,8 @@ class AnomalyDetection(DataPreprocessing):
                     ],
                 )
 
-            print("iter", iter)
             current_lr = optimizer.param_groups[0]["lr"]
-            print("current_lr:", current_lr)
-            run["current_lr"].append(current_lr, step=iter)
+            run["smote/current_lr"].append(current_lr, step=iter)
 
     def evaluation_mode(
         self,
@@ -342,8 +341,8 @@ class AnomalyDetection(DataPreprocessing):
 
         # saved array
         len_train = dataloader_attribute.dataset.tensors[0].shape[0]
-        y_pred_train_label_array = np.empty(shape=(len(len_train),))
-        y_train_array = np.empty(shape=(len(len_train), 3))
+        y_pred_train_label_array = np.empty(shape=(len_train,))
+        y_train_array = np.empty(shape=(len_train, 3))
 
         with torch.no_grad():
             for iter, (X_train, y_train) in enumerate(dataloader_attribute):
@@ -383,7 +382,7 @@ class AnomalyDetection(DataPreprocessing):
             for typ_l, acc in zip(type_labels, accuracy_type_labels):
                 run["{}/accuracy_{}".format(type_data, typ_l)].append(acc, step=iter)
 
-            run["{}/confusion_matrix".format(type_data)].append(acc, step=iter)
+            run["{}/confusion_matrix".format(type_data)].append(cm_img, step=iter)
             plt.close()
 
     def accuracy_calculation(
@@ -427,7 +426,7 @@ class AnomalyDetection(DataPreprocessing):
         y_true_array = y_true_array[:, 0]
 
         # get the id from type_labels
-        ts_ids = [self.indices_timeseries_analysis[typ] for typ in type_labels]
+        ts_ids = [self.indices_timeseries_analysis()[typ] for typ in type_labels]
 
         # get the index of each id
         indices = []
