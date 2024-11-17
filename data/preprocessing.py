@@ -182,6 +182,7 @@ class DataPreprocessing:
                         index_start = np.random.randint(
                             0, len(ts) - self.len_ts_min + 1
                         )
+                        print("index_start:", index_start)
                         ts = ts[index_start : index_start + self.len_ts_min]
 
                     # append to data list
@@ -358,6 +359,14 @@ class DataPreprocessing:
 
         return train_data, train_label, test_data, test_label
 
+    def num_classes_attribute(self):
+        """
+        number of classes attribute for training
+        """
+        _, train_label, _, _ = self.load_data_attribute()
+
+        return len(np.unique(train_label[:, 1]))
+
     def augmentation(self, train_data_aug, train_label_aug, k_smote=5):
         """
         function to do augmentation for the instances that have fewer than k_smote
@@ -421,67 +430,78 @@ class DataPreprocessing:
         """
         load data smote
         """
-        # load data attribute
-        train_data, train_label, test_data, test_label = self.load_data_attribute()
+        # check if data smote exists
+        check_exsist = [
+            os.path.exists(self.path_train_data_smote),
+            os.path.exists(self.path_train_label_smote),
+        ]
 
-        # find the unique labels and their counts
-        label_train_attribute = train_label[:, 1]
-        label_train_attribute_unique, label_train_attribute_counts = np.unique(
-            label_train_attribute, return_counts=True
-        )
-        # print("label_train_unique:", label_train_attribute_unique)
-        # print("label_train_counts:", label_train_attribute_counts)
+        if not all(check_exsist):
+            # load data attribute
+            train_data, train_label, test_data, test_label = self.load_data_attribute()
 
-        # sort data and labels with fewer or more than k_smote
-        train_data_smote = []
-        train_label_smote = []
-        train_data_aug = []
-        train_label_aug = []
+            # find the unique labels and their counts
+            label_train_attribute = train_label[:, 1]
+            label_train_attribute_unique, label_train_attribute_counts = np.unique(
+                label_train_attribute, return_counts=True
+            )
+            # print("label_train_unique:", label_train_attribute_unique)
+            # print("label_train_counts:", label_train_attribute_counts)
 
-        for i in range(len(train_data)):
-            if label_train_attribute_counts[label_train_attribute[i]] > k_smote:
-                train_data_smote.append(train_data[i])
-                train_label_smote.append(label_train_attribute[i])
-            else:
-                train_data_aug.append(train_data[i])
-                train_label_aug.append(label_train_attribute[i])
+            # sort data and labels with fewer or more than k_smote
+            train_data_smote = []
+            train_label_smote = []
+            train_data_aug = []
+            train_label_aug = []
 
-        # augmentation for unique label that fewer than k_smote
-        train_data_aug, train_label_aug = self.augmentation(
-            train_data_aug=train_data_aug,
-            train_label_aug=train_label_aug,
-            k_smote=k_smote,
-        )
+            for i in range(len(train_data)):
+                if label_train_attribute_counts[label_train_attribute[i]] > k_smote:
+                    train_data_smote.append(train_data[i])
+                    train_label_smote.append(label_train_attribute[i])
+                else:
+                    train_data_aug.append(train_data[i])
+                    train_label_aug.append(label_train_attribute[i])
 
-        # print("train_data_smote shape:", np.array(train_data_smote).shape)
-        # print("train_label_smote shape:", np.array(train_label_smote).shape)
+            # augmentation for unique label that fewer than k_smote
+            train_data_aug, train_label_aug = self.augmentation(
+                train_data_aug=train_data_aug,
+                train_label_aug=train_label_aug,
+                k_smote=k_smote,
+            )
 
-        # print("train_data_aug shape:", train_data_aug.shape)
-        # print("train_label_aug shape:", train_label_aug.shape)
+            # print("train_data_smote shape:", np.array(train_data_smote).shape)
+            # print("train_label_smote shape:", np.array(train_label_smote).shape)
 
-        # stack the augmentation and instance has more than k_smote instance
-        train_data_smote = np.vstack((train_data_smote, train_data_aug))
-        # print("train_data_smote shape:", train_data_smote.shape)
-        train_label_smote = np.concatenate((train_label_smote, train_label_aug))
-        # print("train_label_smote shape:", train_label_smote.shape)
+            # print("train_data_aug shape:", train_data_aug.shape)
+            # print("train_label_aug shape:", train_label_aug.shape)
 
-        # label_train_attribute_unique, label_train_attribute_counts = np.unique(
-        #     train_label_smote, return_counts=True
-        # )
+            # stack the augmentation and instance has more than k_smote instance
+            train_data_smote = np.vstack((train_data_smote, train_data_aug))
+            # print("train_data_smote shape:", train_data_smote.shape)
+            train_label_smote = np.concatenate((train_label_smote, train_label_aug))
+            # print("train_label_smote shape:", train_label_smote.shape)
 
-        # print("label_train_unique:", label_train_attribute_unique)
-        # print("label_train_counts:", label_train_attribute_counts)
+            # label_train_attribute_unique, label_train_attribute_counts = np.unique(
+            #     train_label_smote, return_counts=True
+            # )
 
-        # applied smote to data
-        smote = SMOTE(random_state=self.seed, k_neighbors=k_smote)
-        train_data_smote, train_label_smote = smote.fit_resample(
-            train_data_smote,
-            train_label_smote,
-        )
+            # print("label_train_unique:", label_train_attribute_unique)
+            # print("label_train_counts:", label_train_attribute_counts)
 
-        # # save the data
-        # np.save(self.path_train_data_smote, train_data_smote)
-        # np.save(self.path_train_label_smote, train_label_smote)
+            # applied smote to data
+            smote = SMOTE(random_state=self.seed, k_neighbors=k_smote)
+            train_data_smote, train_label_smote = smote.fit_resample(
+                train_data_smote,
+                train_label_smote,
+            )
+
+            # save the data
+            np.save(self.path_train_data_smote, train_data_smote)
+            np.save(self.path_train_label_smote, train_label_smote)
+
+        else:
+            train_data_smote = np.load(self.path_train_data_smote)
+            train_label_smote = np.load(self.path_train_label_smote)
 
         return train_data_smote, train_label_smote
 
@@ -513,7 +533,12 @@ if __name__ == "__main__":
 
     from timeit import default_timer
 
-    seed = 2024
+    seed = 1998
+
+    # # set the seed
+    # np.random.seed(seed)
+    # random.seed(seed)
+
     start = default_timer()
     print()
     data_name = "develop"
@@ -576,16 +601,21 @@ if __name__ == "__main__":
     # print("test_data:", test_data.shape)
     # print("test_label:", test_label.shape)
 
-    train_data_smote, train_label_smote = data_preprocessing.smote()
-    print("train_data_smote shape:", train_data_smote.shape)
-    print("train_label_smote:", train_label_smote.shape)
+    # num_classes_attribute = data_preprocessing.num_classes_attribute()
 
-    label_train_attribute_unique, label_train_attribute_counts = np.unique(
-        train_label_smote, return_counts=True
-    )
+    # train_data_smote, train_label_smote = data_preprocessing.smote()
+    # print("train_data_smote shape:", train_data_smote.shape)
+    # print("train_label_smote:", train_label_smote.shape)
 
-    print("label_train_unique:", label_train_attribute_unique)
-    print("label_train_counts:", label_train_attribute_counts)
+    # label_train_attribute_unique, label_train_attribute_counts = np.unique(
+    #     train_label_smote, return_counts=True
+    # )
+
+    # print("label_train_unique:", label_train_attribute_unique)
+    # print("label_train_counts:", label_train_attribute_counts)
+
+    num_classes_attribute = data_preprocessing.num_classes_attribute()
+    print("num_classes_attribute:", num_classes_attribute)
 
     end = default_timer()
     print(end - start)
