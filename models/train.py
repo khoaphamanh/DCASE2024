@@ -1,10 +1,8 @@
 import torch
 from torch import nn
-from beats.beats import BEATs, BEATsConfig
 from beats.beats_custom import BEATsCustom
 from torchinfo import summary
 from torch.utils.data import DataLoader, TensorDataset
-from imblearn.over_sampling import SMOTE
 import sys
 import os
 import numpy as np
@@ -13,7 +11,7 @@ from torchinfo import summary
 from sklearn.metrics import f1_score, confusion_matrix, accuracy_score
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 import neptune
-from sklearn.metrics import f1_score, confusion_matrix, accuracy_score
+from torch.optim.lr_scheduler import LambdaLR
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -130,9 +128,10 @@ class AnomalyDetection(DataPreprocessing):
         self,
         k_smote,
         batch_size,
-        num_iterations,
+        num_instances,
         learning_rate,
-        accumulation_step,
+        step_warmup,
+        step_accumulation,
         emb_size=None,
     ):
         """
@@ -148,7 +147,7 @@ class AnomalyDetection(DataPreprocessing):
         dataloader_smote = self.data_loader(
             dataset=dataset_smote,
             batch_size=batch_size,
-            num_instances=num_iterations,
+            num_instances=num_instances,
             uniform_sampling=True,
         )
         dataloader_train_attribute = self.data_loader(
@@ -174,7 +173,31 @@ class AnomalyDetection(DataPreprocessing):
 
         # optimizer
         parameters = list(model.parameters()) + list(loss.parameters())
-        optmimzer = torch.optim.AdamW(parameters, lr=learning_rate)
+        optimizer = torch.optim.AdamW(parameters, lr=learning_rate)
+
+        # scheduler
+        def lr_lambda(step):
+            """
+            function to reset learning rate after warmup_steps, lr increase from very small (step 1) to max_lr (warmup_step).
+            lr very small (warmup_step + 1) to lr_max (warmup_step*2)
+            default step is 1
+            """
+            if step % 10 == 0:
+                return 1
+            else:
+                return (step % step_warmup) / step_warmup
+
+        scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+        # training attribute classification
+        self.training_loop(
+            dataloader_smote=dataloader_smote,
+            model=model,
+            step_accumulation=step_accumulation,
+            loss=loss,
+            optimizer=optimizer,
+            scheduler=scheduler,
+        )
 
     def training_loop(
         self,
@@ -182,14 +205,15 @@ class AnomalyDetection(DataPreprocessing):
         model: nn.Module,
         step_accumulation: int,
         loss: AdaCosLoss,
-        optimizer: torch.optim,
+        optimizer: torch.optim.AdamW,
+        scheduler: LambdaLR,
     ):
         """
         training loop for smote data
         """
 
         # loss train
-        loss_smote_accumulated = 0
+        loss_smote_total = 0
 
         for iter, (X_smote, y_smote) in dataloader_smote:
 
@@ -206,23 +230,42 @@ class AnomalyDetection(DataPreprocessing):
 
             # calculate the loss
             loss_smote = loss(embedding_smote, y_smote)
-            loss_smote_accumulated = loss_smote_accumulated + loss_smote.item()
+            loss_smote_total = loss_smote_total + loss_smote.item()
 
-            # gradient ccumulated
-            if (iter+1) % step_accumulation == 0:
-                
+            # update the loss
+            loss_smote.backward()
+
+            # update scheduler
+            scheduler.step()
+
+            # gradient accumulated
+            if (iter + 1) % step_accumulation == 0:
+
+                # update model weights and zero grad
+                optimizer.step()
+                optimizer.zero_grad()
+
+            # report the loss and evaluation mode every 1000 iteration
+            if (iter + 1) % 1000 == 0:
+                loss_smote_total = loss_smote_total / 1000
+                print("loss_smote_total {}".format(loss_smote_total))
+                loss_smote_total = 0
+
+            print("iter", iter)
+            current_lr = optimizer.param_groups[0]["lr"]
+            print("current_lr:", current_lr)
 
 
 # run this script
 if __name__ == "__main__":
 
     # create the seed
-    seed = 2024
-
+    seed = 1998
     develop_name = "develop"
+
     ad = AnomalyDetection(data_name=develop_name, seed=seed)
 
-    path_beat_iter3_state_dict = ad.path_beat_iter3_state_dict
+    # path_beat_iter3_state_dict = ad.path_beat_iter3_state_dict
     # print("path_beat_iter3_state_dict:", path_beat_iter3_state_dict)
 
     # model = BEATsCustom(path_state_dict=path_beat_iter3_state_dict)
@@ -233,18 +276,18 @@ if __name__ == "__main__":
     # out = asp(a)
     # print("out shape:", out.shape)
 
-    a = torch.randn(8, 10 * 16000)
+    # a = torch.randn(8, 10 * 16000)
 
-    # # # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # # # a = a.to(device)
+    # # # # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # # # # a = a.to(device)
 
-    model = BEATsCustom(
-        path_state_dict=path_beat_iter3_state_dict, input_size=10, emb_size=None
-    )
-    # # model = model.to(device)
+    # model = BEATsCustom(
+    #     path_state_dict=path_beat_iter3_state_dict, input_size=10, emb_size=None
+    # )
+    # # # model = model.to(device)
 
-    out = model(a)
-    print("out shape:", out.shape)
+    # out = model(a)
+    # print("out shape:", out.shape)
     # out = out.to(device)
     # true = torch.rand_like(out)
     # optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
@@ -307,32 +350,47 @@ if __name__ == "__main__":
     # print(ad.data_name)
     # print(ad.seed)
 
-    dataset_smote, train_dataset_attribute, test_dataset_attribute = (
-        ad.load_dataset_tensor()
-    )
+    # dataset_smote, train_dataset_attribute, test_dataset_attribute = (
+    #     ad.load_dataset_tensor()
+    # )
 
-    dataloader_smote = ad.data_loader(
-        dataset=dataset_smote, batch_size=8, num_instances=10000, uniform_sampling=True
-    )
-    analys = []
+    # dataloader_smote = ad.data_loader(
+    #     dataset=dataset_smote, batch_size=8, num_instances=10000, uniform_sampling=True
+    # )
+    # analys = []
 
-    # Print the sampled batches
-    for data, labels in dataloader_smote:
+    # # Print the sampled batches
+    # for data, labels in dataloader_smote:
 
-        # print("Labels:", labels)
-        analys.append(labels.tolist())
+    #     # print("Labels:", labels)
+    #     analys.append(labels.tolist())
 
-    analys = np.array(analys).ravel()
+    # analys = np.array(analys).ravel()
 
-    # Calculate the unique elements and their counts
-    unique_elements, counts = np.unique(analys, return_counts=True)
+    # # Calculate the unique elements and their counts
+    # unique_elements, counts = np.unique(analys, return_counts=True)
 
-    # Calculate the probability of each unique element
-    probabilities = counts / len(analys)
-    print("probabilities:", probabilities)
+    # # Calculate the probability of each unique element
+    # probabilities = counts / len(analys)
+    # print("probabilities:", probabilities)
 
     """
     test model anomaly detection
     """
+    k_smote = 5
+    batch_size = 8
+    num_instances = 320000
+    learning_rate = 0.0001
+    step_warmup = 120
+    step_accumulation = 32
+    emb_size = None
 
-    # ad.anomaly_detection
+    ad.anomaly_detection(
+        k_smote=k_smote,
+        batch_size=batch_size,
+        num_instances=num_instances,
+        learning_rate=learning_rate,
+        step_warmup=step_warmup,
+        step_accumulation=step_accumulation,
+        emb_size=emb_size,
+    )
