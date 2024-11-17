@@ -241,7 +241,7 @@ class DataPreprocessing:
 
         return data_timeseries_information
 
-    def indices_timeseries_analyis(self):
+    def indices_timeseries_analysis(self):
         """
         create the csv that analysis type_machine_domain_condition the index of each time series
         """
@@ -251,7 +251,7 @@ class DataPreprocessing:
         name_timeseries = timeseries_information[:, 1]
         condition_timeseries = timeseries_information[:, 3]
 
-        # dict indices_timeseries_analyis
+        # dict indices_timeseries_analysis
         indices_timeseries_analysis = {}
 
         # check if exsist
