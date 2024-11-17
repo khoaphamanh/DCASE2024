@@ -13,6 +13,7 @@ from torchinfo import summary
 from sklearn.metrics import f1_score, confusion_matrix, accuracy_score
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 import neptune
+from sklearn.metrics import f1_score, confusion_matrix, accuracy_score
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -45,21 +46,21 @@ class AnomalyDetection(DataPreprocessing):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.n_gpus = torch.cuda.device_count()
 
-    def load_model(self, input_size=12, embedding_dim=None):
+    def load_model(self, input_size=12, emb_size=None):
         # function to load model beats
         model = BEATsCustom(
             path_state_dict=self.path_beat_iter3_state_dict,
             input_size=input_size,
-            embedding_dim=embedding_dim,
+            emb_size=emb_size,
         )
         return model
 
-    def load_dataset_tensor(self):
+    def load_dataset_tensor(self, k_smote):
         """
         load data smote and train, test data as Tensor
         """
         # load data smote and convert to tensor
-        train_data_smote, train_label_smote = self.smote()
+        train_data_smote, train_label_smote = self.smote(k_smote=k_smote)
 
         # convert to tensor
         train_data_smote = torch.tensor(train_data_smote)
@@ -93,16 +94,13 @@ class AnomalyDetection(DataPreprocessing):
         return dataset_smote, train_dataset_attribute, test_dataset_attribute
 
     def data_loader(
-        self, dataset, batch_size, num_iterations=None, uniform_sampling=False
+        self, dataset, batch_size, num_instances=None, uniform_sampling=False
     ):
         """
         convert tensor data to dataloader
         """
         # check if uniform_sampling
-        if uniform_sampling and isinstance(num_iterations, int):
-
-            # total number of instances
-            num_instances = num_iterations * batch_size
+        if uniform_sampling and isinstance(num_instances, int):
 
             # split to get the label
             _, y_train_smote = dataset.tensors
@@ -128,20 +126,29 @@ class AnomalyDetection(DataPreprocessing):
 
         return dataloader
 
-    def anomaly_detection(self, batch_size, num_iterations):
+    def anomaly_detection(
+        self,
+        k_smote,
+        batch_size,
+        num_iterations,
+        learning_rate,
+        accumulation_step,
+        emb_size=None,
+    ):
         """
         main function to find the result
         """
+
         # load data
         dataset_smote, train_dataset_attribute, test_dataset_attribute = (
-            self.load_dataset_tensor()
+            self.load_dataset_tensor(k_smote=k_smote)
         )
 
         # dataloader
         dataloader_smote = self.data_loader(
             dataset=dataset_smote,
             batch_size=batch_size,
-            num_iterations=num_iterations,
+            num_instances=num_iterations,
             uniform_sampling=True,
         )
         dataloader_train_attribute = self.data_loader(
@@ -152,14 +159,58 @@ class AnomalyDetection(DataPreprocessing):
         )
 
         # load model
-        model = self.load_model()
-        pass
+        input_size = dataloader_train_attribute.dataset.tensors[0].shape[1] // self.fs
+        model = self.load_model(input_size=input_size, emb_size=emb_size)
 
-    def training_loop(self):
+        # model to device
+        if self.n_gpus > 1:
+            model = nn.DataParallel(model, device_ids=list(range(self.n_gpus)), dim=0)
+        model = model.to(self.device)
+
+        # loss
+        if emb_size == None:
+            emb_size = model.embedding_asp
+        loss = AdaCosLoss(num_classes=self.num_classes_attribute(), emb_size=emb_size)
+
+        # optimizer
+        parameters = list(model.parameters()) + list(loss.parameters())
+        optmimzer = torch.optim.AdamW(parameters, lr=learning_rate)
+
+    def training_loop(
+        self,
+        dataloader_smote: DataLoader,
+        model: nn.Module,
+        step_accumulation: int,
+        loss: AdaCosLoss,
+        optimizer: torch.optim,
+    ):
         """
         training loop for smote data
         """
-        pass
+
+        # loss train
+        loss_smote_accumulated = 0
+
+        for iter, (X_smote, y_smote) in dataloader_smote:
+
+            # model in traning model
+            model.train()
+            loss.train()
+
+            # data to device
+            X_smote = X_smote.to(self.device)
+            y_smote = y_smote.to(self.device)
+
+            # forward pass
+            embedding_smote = model(X_smote)
+
+            # calculate the loss
+            loss_smote = loss(embedding_smote, y_smote)
+            loss_smote_accumulated = loss_smote_accumulated + loss_smote.item()
+
+            # gradient ccumulated
+            if (iter+1) % step_accumulation == 0:
+                
 
 
 # run this script
@@ -182,18 +233,18 @@ if __name__ == "__main__":
     # out = asp(a)
     # print("out shape:", out.shape)
 
-    # a = torch.randn(8, 10 * 16000)
+    a = torch.randn(8, 10 * 16000)
 
     # # # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # # # a = a.to(device)
 
-    # model = BEATsCustom(
-    #     path_state_dict=path_beat_iter3_state_dict, input_size=10, embedding_dim=None
-    # )
+    model = BEATsCustom(
+        path_state_dict=path_beat_iter3_state_dict, input_size=10, emb_size=None
+    )
     # # model = model.to(device)
 
-    # out = model(a)
-    # print("out shape:", out.shape)
+    out = model(a)
+    print("out shape:", out.shape)
     # out = out.to(device)
     # true = torch.rand_like(out)
     # optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
@@ -216,14 +267,14 @@ if __name__ == "__main__":
     # print("train_data", test_data.dtype)
     # print("test_label:", test_label.shape)
 
-    train_data, train_label, test_data, test_label = ad.load_data_attribute()
+    # train_data, train_label, test_data, test_label = ad.load_data_attribute()
 
-    print("train_data:", train_data.shape)
-    print("train_data", train_data.dtype)
-    print("train_label:", train_label.shape)
-    print("test_data:", test_data.shape)
-    print("train_data", test_data.dtype)
-    print("test_label:", test_label.shape)
+    # print("train_data:", train_data.shape)
+    # print("train_data", train_data.dtype)
+    # print("train_label:", train_label.shape)
+    # print("test_data:", test_data.shape)
+    # print("train_data", test_data.dtype)
+    # print("test_label:", test_label.shape)
 
     # label_train_unique, count = np.unique(train_label[:, 1], return_counts=True)
     # print("label_train_unique:", label_train_unique)
@@ -261,7 +312,7 @@ if __name__ == "__main__":
     )
 
     dataloader_smote = ad.data_loader(
-        dataset=dataset_smote, batch_size=8, num_iterations=10000, uniform_sampling=True
+        dataset=dataset_smote, batch_size=8, num_instances=10000, uniform_sampling=True
     )
     analys = []
 
@@ -279,3 +330,9 @@ if __name__ == "__main__":
     # Calculate the probability of each unique element
     probabilities = counts / len(analys)
     print("probabilities:", probabilities)
+
+    """
+    test model anomaly detection
+    """
+
+    # ad.anomaly_detection
