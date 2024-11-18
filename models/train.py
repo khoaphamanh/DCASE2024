@@ -252,7 +252,7 @@ class AnomalyDetection(DataPreprocessing):
         """
 
         # step report and evaluation
-        step_eval = step_accumulation * 100
+        step_eval = step_accumulation * 10
 
         # loss train
         loss_smote_total = 0
@@ -298,7 +298,7 @@ class AnomalyDetection(DataPreprocessing):
                 # evaluation mode for train data attribute
                 self.evaluation_mode(
                     run=run,
-                    iter=iter,
+                    iter_smote=iter,
                     model=model,
                     loss=loss,
                     dataloader_attribute=dataloader_train_attribute,
@@ -308,7 +308,7 @@ class AnomalyDetection(DataPreprocessing):
                 # evaluation mode for test data attribute
                 self.evaluation_mode(
                     run=run,
-                    iter=iter,
+                    iter_smote=iter,
                     model=model,
                     loss=loss,
                     dataloader_attribute=dataloader_test_attribute,
@@ -326,7 +326,7 @@ class AnomalyDetection(DataPreprocessing):
     def evaluation_mode(
         self,
         run: neptune.init_run,
-        iter: int,
+        iter_smote: int,
         model: nn.Module,
         loss: AdaCosLoss,
         dataloader_attribute: DataLoader,
@@ -340,73 +340,73 @@ class AnomalyDetection(DataPreprocessing):
         loss.eval()
 
         # saved array
-        len_train = dataloader_attribute.dataset.tensors[0].shape[0]
-        y_pred_train_label_array = np.empty(shape=(len_train,))
-        y_train_array = np.empty(shape=(len_train, 3))
+        len_dataset = dataloader_attribute.dataset.tensors[0].shape[0]
+        y_pred_label_array = np.empty(shape=(len_dataset,))
+        y_true_array = np.empty(shape=(len_dataset, 3))
 
         with torch.no_grad():
-            for iter, (X_train, y_train) in enumerate(dataloader_attribute):
+            for iter_eval, (X, y) in enumerate(dataloader_attribute):
 
                 # data to device
-                X_train = X_train.to(self.device)
+                X = X.to(self.device)
 
                 # forward pass
-                embedding_train = model(X_train)
+                embedding = model(X)
 
                 # pred the label
-                y_pred_train_label = loss.pred_labels(embedding=embedding_train)
+                y_pred_label = loss.pred_labels(embedding=embedding)
 
                 # save to array
-                y_train_array[iter * batch_size : iter * batch_size + batch_size] = (
-                    y_train.cpu().numpy()
-                )
-                y_pred_train_label_array[
-                    iter * batch_size : iter * batch_size + batch_size
-                ] = y_pred_train_label.cpu().numpy()
+                y_true_array[
+                    iter_eval * batch_size : iter_eval * batch_size + batch_size
+                ] = y.cpu().numpy()
+                y_pred_label_array[
+                    iter_eval * batch_size : iter_eval * batch_size + batch_size
+                ] = y_pred_label.cpu().numpy()
 
             # calculate accuracy
             type_data = type_labels[0].split("_")[0]
             accuracy_type_labels = self.accuracy_calculation(
-                y_train_array=y_train_array,
-                y_pred_train_label_array=y_pred_train_label_array,
+                y_true_array=y_true_array,
+                y_pred_label_array=y_pred_label_array,
                 type_labels=type_labels,
             )
 
             # calculate confusion matrix
-            cm = confusion_matrix(
-                y_true=y_train_array[:, 1], y_pred=y_pred_train_label_array
-            )
+            cm = confusion_matrix(y_true=y_true_array[:, 1], y_pred=y_pred_label_array)
             cm_img = self.plot_confusion_matrix(cm=cm, type_data=type_data)
 
             # save metrics in run
             for typ_l, acc in zip(type_labels, accuracy_type_labels):
-                run["{}/accuracy_{}".format(type_data, typ_l)].append(acc, step=iter)
+                run["{}/accuracy_{}".format(type_data, typ_l)].append(
+                    acc, step=iter_smote
+                )
 
-            run["{}/confusion_matrix".format(type_data)].append(cm_img, step=iter)
+            run["{}/confusion_matrix".format(type_data)].append(cm_img, step=iter_smote)
             plt.close()
 
     def accuracy_calculation(
         self,
-        y_train_array: np.array,
-        y_pred_train_label_array: np.array,
+        y_true_array: np.array,
+        y_pred_label_array: np.array,
         type_labels=["train_source_normal", "train_target_normal"],
     ):
         """
-        get the accuracy given y_train_array shape (index, attribute, condition)
-        and y_pred_train_label_array shape (pred_attribute)
+        get the accuracy given y_true_array shape (index, attribute, condition)
+        and y_pred_label_array shape (pred_attribute)
         """
         # get the indices
         indices = self.get_indices(
-            y_true_array=y_train_array,
+            y_true_array=y_true_array,
             type_labels=type_labels,
         )
-        y_train_array = y_train_array[:, 1]
+        y_true_array = y_true_array[:, 1]
 
         # calculate accuracy
         accuracy = []
         for idx in indices:
-            y_pred = y_pred_train_label_array[idx]
-            y_true = y_train_array[idx]
+            y_pred = y_pred_label_array[idx]
+            y_true = y_true_array[idx]
             acc = accuracy_score(y_pred=y_pred, y_true=y_true)
             accuracy.append(acc)
 
