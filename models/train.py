@@ -58,8 +58,12 @@ class AnomalyDetection(DataPreprocessing):
             self.vram = None
 
         # knn models
-        self.name_knn = ["{}_{}".format(m,d) for m in self.machines for d in self.domain_data]
-        
+        self.name_knn = [
+            "{}_{}_{}".format("train", m, d)
+            for m in self.machines
+            for d in self.domain_data
+        ]
+
     def load_model(self, input_size=12, emb_size=None):
         # function to load model beats
         model = BEATsCustom(
@@ -194,6 +198,7 @@ class AnomalyDetection(DataPreprocessing):
         # loss
         if emb_size == None:
             emb_size = model.embedding_asp
+            print("emb_size:", emb_size)
         loss = AdaCosLoss(num_classes=self.num_classes_attribute(), emb_size=emb_size)
 
         # optimizer
@@ -244,6 +249,7 @@ class AnomalyDetection(DataPreprocessing):
             dataloader_smote=dataset_smote,
             dataloader_train_attribute=dataloader_train_attribute,
             dataloader_test_attribute=dataloader_test_attribute,
+            batch_size=batch_size,
             model=model,
             step_accumulation=step_accumulation,
             loss=loss,
@@ -256,9 +262,10 @@ class AnomalyDetection(DataPreprocessing):
         self,
         run: neptune.init_run,
         dataloader_smote_uniform: DataLoader,
+        dataloader_smote: DataLoader,
         dataloader_train_attribute: DataLoader,
         dataloader_test_attribute: DataLoader,
-        batch_size:int,
+        batch_size: int,
         model: nn.Module,
         step_accumulation: int,
         loss: AdaCosLoss,
@@ -271,7 +278,7 @@ class AnomalyDetection(DataPreprocessing):
         """
 
         # step report and evaluation
-        step_eval = step_accumulation * 1
+        step_eval = step_accumulation * 10
 
         # loss train
         loss_smote_total = 0
@@ -303,7 +310,9 @@ class AnomalyDetection(DataPreprocessing):
 
                 # report loss
                 loss_smote_total = loss_smote_total / step_accumulation
-                run["smote/loss_smote_total"].append(loss_smote_total, step=iter)
+                run["smote_uniform/loss_smote_total"].append(
+                    loss_smote_total, step=iter
+                )
                 loss_smote_total = 0
 
             # update scheduler
@@ -312,7 +321,12 @@ class AnomalyDetection(DataPreprocessing):
             # report the loss and evaluation mode every 1000 iteration
             if (iter + 1) % step_eval == 0:
                 # evaluation mode for train data attribute
-                self.evaluation_mode(
+                (
+                    accuracy_train_dict,
+                    embedding_train_array,
+                    y_true_train_array,
+                    y_pred_label_train_array,
+                ) = self.evaluation_mode(
                     run=run,
                     iter_smote=iter,
                     batch_size=batch_size,
@@ -324,13 +338,19 @@ class AnomalyDetection(DataPreprocessing):
                 )
 
                 # evaluation mode for test data attribute
-                self.evaluation_mode(
+                (
+                    accuracy_test_dict,
+                    embedding_test_array,
+                    y_true_test_array,
+                    y_pred_label_test_array,
+                ) = self.evaluation_mode(
                     run=run,
                     iter_smote=iter,
                     batch_size=batch_size,
                     model=model,
                     loss=loss,
                     dataloader_attribute=dataloader_test_attribute,
+                    emb_size=emb_size,
                     type_labels=[
                         "test_source_normal",
                         "test_target_normal",
@@ -339,14 +359,34 @@ class AnomalyDetection(DataPreprocessing):
                     ],
                 )
 
+                # only apply knn for anomly detechtion for a good performance
+                if all(acc > 0.9 for acc in accuracy_train_dict.values()) and (
+                    acc > 0.9 for acc in accuracy_test_dict.values()
+                ):
+                    (
+                        accuracy_smote_dict,
+                        embedding_smote_array,
+                        y_true_smote_array,
+                        y_pred_label_smote_array,
+                    ) = self.evaluation_mode(
+                        run=run,
+                        iter_smote=iter,
+                        batch_size=batch_size,
+                        model=model,
+                        loss=loss,
+                        dataloader_attribute=dataloader_test_attribute,
+                        emb_size=emb_size,
+                        type_labels=["smote"],
+                    )
+
             current_lr = optimizer.param_groups[0]["lr"]
-            run["smote/current_lr"].append(current_lr, step=iter)
+            run["smote_uniform/current_lr"].append(current_lr, step=iter)
 
     def evaluation_mode(
         self,
         run: neptune.init_run,
         iter_smote: int,
-        batch_size:int, 
+        batch_size: int,
         model: nn.Module,
         loss: AdaCosLoss,
         dataloader_attribute: DataLoader,
@@ -361,9 +401,14 @@ class AnomalyDetection(DataPreprocessing):
         loss.eval()
 
         # y_true, y_pred, embedding array
+        type_data = type_labels[0].split("_")[0]
         len_dataset = dataloader_attribute.dataset.tensors[0].shape[0]
         y_pred_label_array = np.empty(shape=(len_dataset,))
-        y_true_array = np.empty(shape=(len_dataset, 3))
+        if type_data in ["train", "test"]:
+            y_true_array = np.empty(shape=(len_dataset, 3))
+        else:
+            y_true_array = np.empty(shape=(len_dataset,))
+
         embedding_array = np.empty(shape=(len_dataset, emb_size))
 
         with torch.no_grad():
@@ -388,13 +433,19 @@ class AnomalyDetection(DataPreprocessing):
                     iter_eval * batch_size : iter_eval * batch_size + batch_size
                 ] = y_pred_label.cpu().numpy()
 
-            # calculate accuracy
-            type_data = type_labels[0].split("_")[0]
-            accuracy_type_labels = self.accuracy_calculation(
-                y_true_array=y_true_array,
-                y_pred_label_array=y_pred_label_array,
-                type_labels=type_labels,
-            )
+            # calculate accuracy for train and test data
+            if type_data in ["train", "test"]:
+                accuracy_type_labels = self.accuracy_calculation(
+                    y_true_array=y_true_array,
+                    y_pred_label_array=y_pred_label_array,
+                    type_labels=type_labels,
+                )
+
+            # calculate accuracy for train data smote
+            else:
+                accuracy_type_labels = [
+                    accuracy_score(y_true=y_true_array, y_pred=y_pred_label_array)
+                ]
 
             # calculate confusion matrix
             cm = confusion_matrix(y_true=y_true_array[:, 1], y_pred=y_pred_label_array)
@@ -454,7 +505,7 @@ class AnomalyDetection(DataPreprocessing):
         y_true_array = y_true_array[:, 0]
 
         # get the id from type_labels
-        ts_ids = [self.indices_timeseries_analysis()[typ] for typ in type_labels]
+        ts_ids = [self.indices_timeseries_analysis(key=typ) for typ in type_labels]
 
         # get the index of each id
         indices = []
@@ -482,20 +533,24 @@ class AnomalyDetection(DataPreprocessing):
         embedding_train_array,
         embedding_test_array,
         y_pred_train_array,
-        y_pred_test_array
+        y_pred_test_array,
     ):
         """
         use knn to make decision if timeseries in test data normal or anomaly
         """
+
+        # list to save z score scaler and pretrained knn
         knn = []
         scaler = []
-        for machine_domain in self.name_knn:
-            
+
+        # train each knn based on the predicted y_pred_train
+        for label in self.num_classes_attribute():
             
 
 
 # run this script
 if __name__ == "__main__":
+
     # create the seed
     seed = 1998
     develop_name = "develop"
@@ -611,9 +666,9 @@ if __name__ == "__main__":
     # probabilities = counts / len(analys)
     # print("probabilities:", probabilities)
 
-    knn_name = ad.name_knn
-    print("knn_name:", knn_name)
-    
+    # knn_name = ad.name_knn
+    # print("knn_name:", knn_name)
+
     """
     test model anomaly detection
     """
