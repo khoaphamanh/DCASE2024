@@ -9,6 +9,7 @@ import numpy as np
 from loss import AdaCosLoss
 from torchinfo import summary
 from sklearn.metrics import f1_score, confusion_matrix, accuracy_score
+from sklearn.neighbors import NearestNeighbors
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 import neptune
 from neptune.utils import stringify_unsupported
@@ -56,6 +57,9 @@ class AnomalyDetection(DataPreprocessing):
             self.n_gpus = None
             self.vram = None
 
+        # knn models
+        self.name_knn = ["{}_{}".format(m,d) for m in self.machines for d in self.domain_data]
+        
     def load_model(self, input_size=12, emb_size=None):
         # function to load model beats
         model = BEATsCustom(
@@ -111,7 +115,6 @@ class AnomalyDetection(DataPreprocessing):
         """
         # check if uniform_sampling
         if uniform_sampling and isinstance(num_instances, int):
-
             # split to get the label
             _, y_train_smote = dataset.tensors
 
@@ -155,16 +158,21 @@ class AnomalyDetection(DataPreprocessing):
         run = neptune.init_run(project=project, api_token=api_token)
 
         # load data
-        dataset_smote, train_dataset_attribute, test_dataset_attribute = (
-            self.load_dataset_tensor(k_smote=k_smote)
-        )
+        (
+            dataset_smote,
+            train_dataset_attribute,
+            test_dataset_attribute,
+        ) = self.load_dataset_tensor(k_smote=k_smote)
 
         # dataloader
-        dataloader_smote = self.data_loader(
+        dataloader_smote_uniform = self.data_loader(
             dataset=dataset_smote,
             batch_size=batch_size,
             num_instances=num_instances,
             uniform_sampling=True,
+        )
+        dataloader_smote = self.data_loader(
+            dataset=dataset_smote, batch_size=batch_size
         )
         dataloader_train_attribute = self.data_loader(
             dataset=train_dataset_attribute, batch_size=batch_size
@@ -232,7 +240,8 @@ class AnomalyDetection(DataPreprocessing):
         # training attribute classification
         self.training_loop(
             run=run,
-            dataloader_smote=dataloader_smote,
+            dataloader_smote_uniform=dataloader_smote_uniform,
+            dataloader_smote=dataset_smote,
             dataloader_train_attribute=dataloader_train_attribute,
             dataloader_test_attribute=dataloader_test_attribute,
             model=model,
@@ -240,19 +249,22 @@ class AnomalyDetection(DataPreprocessing):
             loss=loss,
             optimizer=optimizer,
             scheduler=scheduler,
+            emb_size=emb_size,
         )
 
     def training_loop(
         self,
         run: neptune.init_run,
-        dataloader_smote: DataLoader,
+        dataloader_smote_uniform: DataLoader,
         dataloader_train_attribute: DataLoader,
         dataloader_test_attribute: DataLoader,
+        batch_size:int,
         model: nn.Module,
         step_accumulation: int,
         loss: AdaCosLoss,
         optimizer: torch.optim.AdamW,
         scheduler: LambdaLR,
+        emb_size: int,
     ):
         """
         training loop for smote data
@@ -264,8 +276,7 @@ class AnomalyDetection(DataPreprocessing):
         # loss train
         loss_smote_total = 0
 
-        for iter, (X_smote, y_smote) in enumerate(dataloader_smote):
-
+        for iter, (X_smote, y_smote) in enumerate(dataloader_smote_uniform):
             # model in traning model
             model.train()
             loss.train()
@@ -286,7 +297,6 @@ class AnomalyDetection(DataPreprocessing):
 
             # gradient accumulated and report loss
             if (iter + 1) % step_accumulation == 0:
-
                 # update model weights and zero grad
                 optimizer.step()
                 optimizer.zero_grad()
@@ -301,14 +311,15 @@ class AnomalyDetection(DataPreprocessing):
 
             # report the loss and evaluation mode every 1000 iteration
             if (iter + 1) % step_eval == 0:
-
                 # evaluation mode for train data attribute
                 self.evaluation_mode(
                     run=run,
                     iter_smote=iter,
+                    batch_size=batch_size,
                     model=model,
                     loss=loss,
                     dataloader_attribute=dataloader_train_attribute,
+                    emb_size=emb_size,
                     type_labels=["train_source_normal", "train_target_normal"],
                 )
 
@@ -316,6 +327,7 @@ class AnomalyDetection(DataPreprocessing):
                 self.evaluation_mode(
                     run=run,
                     iter_smote=iter,
+                    batch_size=batch_size,
                     model=model,
                     loss=loss,
                     dataloader_attribute=dataloader_test_attribute,
@@ -334,9 +346,11 @@ class AnomalyDetection(DataPreprocessing):
         self,
         run: neptune.init_run,
         iter_smote: int,
+        batch_size:int, 
         model: nn.Module,
         loss: AdaCosLoss,
         dataloader_attribute: DataLoader,
+        emb_size: int = None,
         type_labels=["train_source_normal", "train_target_normal"],
     ):
         """
@@ -346,14 +360,14 @@ class AnomalyDetection(DataPreprocessing):
         model.eval()
         loss.eval()
 
-        # saved array
+        # y_true, y_pred, embedding array
         len_dataset = dataloader_attribute.dataset.tensors[0].shape[0]
         y_pred_label_array = np.empty(shape=(len_dataset,))
         y_true_array = np.empty(shape=(len_dataset, 3))
+        embedding_array = np.empty(shape=(len_dataset, emb_size))
 
         with torch.no_grad():
             for iter_eval, (X, y) in enumerate(dataloader_attribute):
-
                 # data to device
                 X = X.to(self.device)
 
@@ -364,6 +378,9 @@ class AnomalyDetection(DataPreprocessing):
                 y_pred_label = loss.pred_labels(embedding=embedding)
 
                 # save to array
+                embedding_array[
+                    iter_eval * batch_size : iter_eval * batch_size + batch_size
+                ] = embedding.cpu().numpy()
                 y_true_array[
                     iter_eval * batch_size : iter_eval * batch_size + batch_size
                 ] = y.cpu().numpy()
@@ -384,13 +401,17 @@ class AnomalyDetection(DataPreprocessing):
             cm_img = self.plot_confusion_matrix(cm=cm, type_data=type_data)
 
             # save metrics in run
+            accuracy_dict = {}
             for typ_l, acc in zip(type_labels, accuracy_type_labels):
                 run["{}/accuracy_{}".format(type_data, typ_l)].append(
                     acc, step=iter_smote
                 )
+                accuracy_dict[typ_l] = acc
 
             run["{}/confusion_matrix".format(type_data)].append(cm_img, step=iter_smote)
             plt.close()
+
+        return accuracy_dict, embedding_array, y_true_array, y_pred_label_array
 
     def accuracy_calculation(
         self,
@@ -456,10 +477,25 @@ class AnomalyDetection(DataPreprocessing):
 
         return fig
 
+    def decision_knn(
+        self,
+        embedding_train_array,
+        embedding_test_array,
+        y_pred_train_array,
+        y_pred_test_array
+    ):
+        """
+        use knn to make decision if timeseries in test data normal or anomaly
+        """
+        knn = []
+        scaler = []
+        for machine_domain in self.name_knn:
+            
+            
+
 
 # run this script
 if __name__ == "__main__":
-
     # create the seed
     seed = 1998
     develop_name = "develop"
@@ -575,6 +611,9 @@ if __name__ == "__main__":
     # probabilities = counts / len(analys)
     # print("probabilities:", probabilities)
 
+    knn_name = ad.name_knn
+    print("knn_name:", knn_name)
+    
     """
     test model anomaly detection
     """
