@@ -11,6 +11,7 @@ from torchinfo import summary
 from sklearn.metrics import f1_score, confusion_matrix, accuracy_score
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 import neptune
+from neptune.utils import stringify_unsupported
 from torch.optim.lr_scheduler import LambdaLR
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -35,7 +36,7 @@ class AnomalyDetection(DataPreprocessing):
         self.path_pretrained_models_directory = os.path.join(
             self.path_models_directory, "pretrained_models"
         )
-        if os.path.exists(self.path_pretrained_models_directory):
+        if not os.path.exists(self.path_pretrained_models_directory):
             import download_models
 
         self.path_beat_iter3_state_dict = os.path.join(
@@ -46,9 +47,14 @@ class AnomalyDetection(DataPreprocessing):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if torch.cuda.is_available():
             self.gpu_name = torch.cuda.get_device_name(0)
+            self.n_gpus = torch.cuda.device_count()
+            self.vram = (
+                torch.cuda.get_device_properties(0).total_memory / 1024 / 1024 / 1024
+            )
         else:
             self.gpu_name = None
-        self.n_gpus = torch.cuda.device_count()
+            self.n_gpus = None
+            self.vram = None
 
     def load_model(self, input_size=12, emb_size=None):
         # function to load model beats
@@ -218,8 +224,9 @@ class AnomalyDetection(DataPreprocessing):
         configuration["seed"] = self.seed
         configuration["num_params"] = num_params
         configuration["n_gpus"] = self.n_gpus
-        configuration["device"] = self.device
+        configuration["device"] = stringify_unsupported(self.device)
         configuration["gpu_name"] = self.gpu_name
+        configuration["vram"] = self.vram
         run["configuration"] = configuration
 
         # training attribute classification
@@ -252,7 +259,7 @@ class AnomalyDetection(DataPreprocessing):
         """
 
         # step report and evaluation
-        step_eval = step_accumulation * 10
+        step_eval = step_accumulation * 1
 
         # loss train
         loss_smote_total = 0
@@ -577,7 +584,7 @@ if __name__ == "__main__":
     batch_size = 8
     num_instances = 320000
     learning_rate = 0.0001
-    step_warmup = 120
+    step_warmup = 480
     step_accumulation = 32
     emb_size = None
 
