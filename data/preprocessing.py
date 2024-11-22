@@ -241,7 +241,7 @@ class DataPreprocessing:
 
         return data_timeseries_information
 
-    def indices_timeseries_analysis(self):
+    def indices_timeseries_analysis(self, key=None):
         """
         create the csv that analysis type_machine_domain_condition the index of each time series
         """
@@ -274,16 +274,16 @@ class DataPreprocessing:
                         ]
 
                         for m in self.machines:
-                            if t == "test":
-                                # key of the dict indices_timeseries_analyis
-                                key = "{}_{}_{}".format(t, m, d)
-                                indices_timeseries_analysis[key] = [
-                                    i
-                                    for i in indices_timeseries
-                                    if t in name_timeseries[i]
-                                    and m in name_timeseries[i]
-                                    and d in name_timeseries[i]
-                                ]
+
+                            # key of the dict indices_timeseries_analyis
+                            key = "{}_{}_{}".format(t, m, d)
+                            indices_timeseries_analysis[key] = [
+                                i
+                                for i in indices_timeseries
+                                if t in name_timeseries[i]
+                                and m in name_timeseries[i]
+                                and d in name_timeseries[i]
+                            ]
 
             # delete len keys == 0
             maxlen_value = max([len(i) for i in indices_timeseries_analysis.values()])
@@ -308,7 +308,17 @@ class DataPreprocessing:
             indices_timeseries_analysis = pd.read_csv(
                 self.path_indices_timeseries_analysis
             )
-        return indices_timeseries_analysis
+
+        if key == None:
+            return indices_timeseries_analysis
+        else:
+            key_indices_timeseries_analysis = indices_timeseries_analysis[
+                key
+            ].to_numpy()
+            key_indices_timeseries_analysis = [
+                int(i) for i in key_indices_timeseries_analysis if not np.isnan(i)
+            ]
+            return key_indices_timeseries_analysis
 
     def load_raw_data(self):
         """
@@ -616,6 +626,12 @@ if __name__ == "__main__":
 
     num_classes_attribute = data_preprocessing.num_classes_attribute()
     print("num_classes_attribute:", num_classes_attribute)
+
+    kind = "train_bearing_target"
+    indices_timeseries_analyis = data_preprocessing.indices_timeseries_analysis(
+        key=kind
+    )
+    print("indices_timeseries_analyis:", indices_timeseries_analyis)
 
     end = default_timer()
     print(end - start)
