@@ -263,7 +263,7 @@ class DataPreprocessing:
                         # condition as number
                         c_number = self.label_condition_number[c]
 
-                        # key of the dict indices_timeseries_analyis
+                        # key of the dict indices_timeseries_analyis for type, domain, condition
                         key = "{}_{}_{}".format(t, d, c)
                         indices_timeseries_analysis[key] = [
                             i
@@ -273,9 +273,15 @@ class DataPreprocessing:
                             and c_number == condition_timeseries[i]
                         ]
 
+                        # key of the dict indices_timeseries_analyis for type
+                        key = "{}".format(t)
+                        indices_timeseries_analysis[key] = [
+                            i for i in indices_timeseries if t in name_timeseries[i]
+                        ]
+
                         for m in self.machines:
 
-                            # key of the dict indices_timeseries_analyis
+                            # key of the dict indices_timeseries_analyis for type, machine, domain
                             key = "{}_{}_{}".format(t, m, d)
                             indices_timeseries_analysis[key] = [
                                 i
@@ -628,6 +634,12 @@ if __name__ == "__main__":
     print("num_classes_attribute:", num_classes_attribute)
 
     kind = "train_bearing_target"
+    indices_timeseries_analyis = data_preprocessing.indices_timeseries_analysis(
+        key=kind
+    )
+    print("indices_timeseries_analyis:", indices_timeseries_analyis)
+
+    kind = "test"
     indices_timeseries_analyis = data_preprocessing.indices_timeseries_analysis(
         key=kind
     )
