@@ -78,7 +78,7 @@ class DataPreprocessing:
         )
         self.path_indices_timeseries_analysis = os.path.join(
             self.path_data_name_directory,
-            "{}_indices_timeseries_analysis.csv".format(self.data_name),
+            "{}_id_timeseries_analysis.csv".format(self.data_name),
         )
 
         # path raw data
@@ -128,7 +128,7 @@ class DataPreprocessing:
         label_unique = []
 
         # loop type train test
-        idx_ts = 0  # index of the each timeseries, from 0 to 8399 (total 8400)
+        id_ts = 0  # index of the each timeseries, from 0 to 8399 (total 8400)
 
         for t in self.type_data:
 
@@ -169,7 +169,7 @@ class DataPreprocessing:
                     path_n_ts = os.path.join(machine, n_ts)
                     timeseries_information.append(
                         [
-                            idx_ts,
+                            id_ts,
                             path_n_ts,
                             label_attribute_number,
                             label_condition_number,
@@ -186,7 +186,7 @@ class DataPreprocessing:
                         ts = ts[index_start : index_start + self.len_ts_min]
 
                     # append to data list
-                    label = [idx_ts, label_attribute_number, label_condition_number]
+                    label = [id_ts, label_attribute_number, label_condition_number]
                     if t == "train":
                         train_data.append(ts)
                         train_label.append(label)
@@ -195,7 +195,7 @@ class DataPreprocessing:
                         test_label.append(label)
 
                     # next index
-                    idx_ts = idx_ts + 1
+                    id_ts = id_ts + 1
 
         # save train test data list
         np.save(self.path_train_data, train_data)
@@ -208,7 +208,7 @@ class DataPreprocessing:
         column_names = ["Number", "Attribute"]
         label_unique = pd.DataFrame(label_unique, columns=column_names)
 
-        column_names = ["Index", "Name", "Attribute", "Condition", "Length"]
+        column_names = ["Id", "Name", "Attribute", "Condition", "Length"]
         timeseries_information = pd.DataFrame(
             timeseries_information, columns=column_names
         )
@@ -241,13 +241,13 @@ class DataPreprocessing:
 
         return data_timeseries_information
 
-    def indices_timeseries_analysis(self, key=None):
+    def id_timeseries_analysis(self, key=None):
         """
         create the csv that analysis type_machine_domain_condition the index of each time series
         """
         # get the information from timeseries_information
         timeseries_information = self.timeseries_information().to_numpy()
-        indices_timeseries = timeseries_information[:, 0]
+        id_timeseries = timeseries_information[:, 0]
         name_timeseries = timeseries_information[:, 1]
         condition_timeseries = timeseries_information[:, 3]
 
@@ -267,7 +267,7 @@ class DataPreprocessing:
                         key = "{}_{}_{}".format(t, d, c)
                         indices_timeseries_analysis[key] = [
                             i
-                            for i in indices_timeseries
+                            for i in id_timeseries
                             if t in name_timeseries[i]
                             and d in name_timeseries[i]
                             and c_number == condition_timeseries[i]
@@ -276,7 +276,7 @@ class DataPreprocessing:
                         # key of the dict indices_timeseries_analyis for type
                         key = "{}".format(t)
                         indices_timeseries_analysis[key] = [
-                            i for i in indices_timeseries if t in name_timeseries[i]
+                            i for i in id_timeseries if t in name_timeseries[i]
                         ]
 
                         for m in self.machines:
@@ -285,7 +285,7 @@ class DataPreprocessing:
                             key = "{}_{}_{}".format(t, m, d)
                             indices_timeseries_analysis[key] = [
                                 i
-                                for i in indices_timeseries
+                                for i in id_timeseries
                                 if t in name_timeseries[i]
                                 and m in name_timeseries[i]
                                 and d in name_timeseries[i]
@@ -589,8 +589,8 @@ if __name__ == "__main__":
     # label_unique = data_preprocessing.label_unique()
     # print("label_unique:", label_unique)
 
-    # data_timeseries_information = data_preprocessing.timeseries_information()
-    # print("data_timeseries_information:", data_timeseries_information)
+    data_timeseries_information = data_preprocessing.timeseries_information()
+    print("data_timeseries_information:", data_timeseries_information)
 
     # path_label_unique = data_preprocessing.path_label_unique
     # print("path_label_unique:", path_label_unique)
@@ -634,15 +634,11 @@ if __name__ == "__main__":
     print("num_classes_attribute:", num_classes_attribute)
 
     kind = "train_bearing_target"
-    indices_timeseries_analyis = data_preprocessing.indices_timeseries_analysis(
-        key=kind
-    )
+    indices_timeseries_analyis = data_preprocessing.id_timeseries_analysis(key=kind)
     print("indices_timeseries_analyis:", indices_timeseries_analyis)
 
     kind = "test"
-    indices_timeseries_analyis = data_preprocessing.indices_timeseries_analysis(
-        key=kind
-    )
+    indices_timeseries_analyis = data_preprocessing.id_timeseries_analysis(key=kind)
     print("indices_timeseries_analyis:", indices_timeseries_analyis)
 
     end = default_timer()
