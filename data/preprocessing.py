@@ -76,7 +76,7 @@ class DataPreprocessing:
             self.path_data_name_directory,
             "{}_data_timeseries_information.csv".format(self.data_name),
         )
-        self.path_indices_timeseries_analysis = os.path.join(
+        self.path_id_timeseries_analysis = os.path.join(
             self.path_data_name_directory,
             "{}_id_timeseries_analysis.csv".format(self.data_name),
         )
@@ -255,7 +255,7 @@ class DataPreprocessing:
         indices_timeseries_analysis = {}
 
         # check if exsist
-        if not os.path.exists(self.path_indices_timeseries_analysis):
+        if not os.path.exists(self.path_id_timeseries_analysis):
             for t in self.type_data:
                 for d in self.domain_data:
                     for c in self.label_condition_number.keys():
@@ -307,13 +307,11 @@ class DataPreprocessing:
             # convert to data frame and save it as .csv
             indices_timeseries_analysis = pd.DataFrame(indices_timeseries_analysis)
             indices_timeseries_analysis.to_csv(
-                self.path_indices_timeseries_analysis, index=False
+                self.path_id_timeseries_analysis, index=False
             )
 
         else:
-            indices_timeseries_analysis = pd.read_csv(
-                self.path_indices_timeseries_analysis
-            )
+            indices_timeseries_analysis = pd.read_csv(self.path_id_timeseries_analysis)
 
         if key == None:
             return indices_timeseries_analysis
