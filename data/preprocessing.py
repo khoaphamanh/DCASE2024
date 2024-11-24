@@ -248,7 +248,7 @@ class DataPreprocessing:
 
         return data_timeseries_information
 
-    def id_timeseries_analysis(self, key=None):
+    def id_timeseries_analysis(self, keys=None):
         """
         create the csv that analysis type_machine_domain_condition the index of each time series
         """
@@ -320,11 +320,11 @@ class DataPreprocessing:
         else:
             indices_timeseries_analysis = pd.read_csv(self.path_id_timeseries_analysis)
 
-        if key == None:
+        if keys == None:
             return indices_timeseries_analysis
         else:
             key_indices_timeseries_analysis = indices_timeseries_analysis[
-                key
+                keys
             ].to_numpy()
             key_indices_timeseries_analysis = [
                 int(i) for i in key_indices_timeseries_analysis if not np.isnan(i)
@@ -659,6 +659,10 @@ if __name__ == "__main__":
 
     type_labels_hmean = data_preprocessing.type_labels_hmean
     print("type_labels_hmean:", type_labels_hmean)
+
+    check = type_labels_hmean[0]
+    out = data_preprocessing.id_timeseries_analysis(key=check)
+    print("out:", out)
 
     end = default_timer()
     print(end - start)
