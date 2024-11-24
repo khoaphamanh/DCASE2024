@@ -8,8 +8,9 @@ import os
 import numpy as np
 from loss import AdaCosLoss
 from torchinfo import summary
-from sklearn.metrics import f1_score, confusion_matrix, accuracy_score
+from sklearn.metrics import confusion_matrix, accuracy_score
 from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 import neptune
 from neptune.utils import stringify_unsupported
@@ -139,7 +140,9 @@ class AnomalyDetection(DataPreprocessing):
             )
 
         else:
-            dataloader = DataLoader(dataset=dataset, batch_size=batch_size)
+            dataloader = DataLoader(
+                dataset=dataset, batch_size=batch_size, shuffle=False
+            )
 
         return dataloader
 
@@ -153,6 +156,7 @@ class AnomalyDetection(DataPreprocessing):
         learning_rate,
         step_warmup,
         step_accumulation,
+        k_neighbors,
         emb_size=None,
     ):
         """
@@ -175,7 +179,7 @@ class AnomalyDetection(DataPreprocessing):
             num_instances=num_instances,
             uniform_sampling=True,
         )
-        dataloader_smote = self.data_loader(
+        dataloader_smote_attribute = self.data_loader(
             dataset=dataset_smote, batch_size=batch_size
         )
         dataloader_train_attribute = self.data_loader(
@@ -246,7 +250,7 @@ class AnomalyDetection(DataPreprocessing):
         self.training_loop(
             run=run,
             dataloader_smote_uniform=dataloader_smote_uniform,
-            dataloader_smote=dataset_smote,
+            dataloader_smote_attribute=dataloader_smote_attribute,
             dataloader_train_attribute=dataloader_train_attribute,
             dataloader_test_attribute=dataloader_test_attribute,
             batch_size=batch_size,
@@ -255,6 +259,7 @@ class AnomalyDetection(DataPreprocessing):
             loss=loss,
             optimizer=optimizer,
             scheduler=scheduler,
+            k_neighbors=k_neighbors,
             emb_size=emb_size,
         )
 
@@ -262,7 +267,7 @@ class AnomalyDetection(DataPreprocessing):
         self,
         run: neptune.init_run,
         dataloader_smote_uniform: DataLoader,
-        dataloader_smote: DataLoader,
+        dataloader_smote_attribute: DataLoader,
         dataloader_train_attribute: DataLoader,
         dataloader_test_attribute: DataLoader,
         batch_size: int,
@@ -271,6 +276,7 @@ class AnomalyDetection(DataPreprocessing):
         loss: AdaCosLoss,
         optimizer: torch.optim.AdamW,
         scheduler: LambdaLR,
+        k_neighbors: int,
         emb_size: int,
     ):
         """
@@ -278,7 +284,7 @@ class AnomalyDetection(DataPreprocessing):
         """
 
         # step report and evaluation
-        step_eval = step_accumulation * 10
+        step_eval = step_accumulation * 20
 
         # loss train
         loss_smote_total = 0
@@ -320,6 +326,16 @@ class AnomalyDetection(DataPreprocessing):
 
             # report the loss and evaluation mode every 1000 iteration
             if (iter + 1) % step_eval == 0:
+                # type_labels
+                type_labels_train = ["train_source_normal", "train_target_normal"]
+                type_labels_test = [
+                    "test_source_normal",
+                    "test_target_normal",
+                    "test_source_anomaly",
+                    "test_target_anomaly",
+                ]
+                type_labels_smote_knn = ["SmoteAttributeKNN"]
+
                 # evaluation mode for train data attribute
                 (
                     accuracy_train_dict,
@@ -334,7 +350,7 @@ class AnomalyDetection(DataPreprocessing):
                     loss=loss,
                     dataloader_attribute=dataloader_train_attribute,
                     emb_size=emb_size,
-                    type_labels=["train_source_normal", "train_target_normal"],
+                    type_labels=type_labels_train,
                 )
 
                 # evaluation mode for test data attribute
@@ -351,18 +367,11 @@ class AnomalyDetection(DataPreprocessing):
                     loss=loss,
                     dataloader_attribute=dataloader_test_attribute,
                     emb_size=emb_size,
-                    type_labels=[
-                        "test_source_normal",
-                        "test_target_normal",
-                        "test_source_anomaly",
-                        "test_target_anomaly",
-                    ],
+                    type_labels=type_labels_test,
                 )
 
                 # only apply knn for anomly detechtion for a good performance
-                if all(acc > 0.9 for acc in accuracy_train_dict.values()) and (
-                    acc > 0.9 for acc in accuracy_test_dict.values()
-                ):
+                if all(acc > 0.6 for acc in accuracy_train_dict.values()):
                     (
                         accuracy_smote_dict,
                         embedding_smote_array,
@@ -374,10 +383,32 @@ class AnomalyDetection(DataPreprocessing):
                         batch_size=batch_size,
                         model=model,
                         loss=loss,
-                        dataloader_attribute=dataloader_test_attribute,
+                        dataloader_attribute=dataloader_smote_attribute,
                         emb_size=emb_size,
-                        type_labels=["smote"],
+                        type_labels=type_labels_smote_knn,
                     )
+
+                    # only use knn if accuracy smote has good performance
+                    if all(acc > 0.6 for acc in accuracy_smote_dict.values()):
+
+                        # use knn to get the decision and anomaly score
+                        decision_test, anomaly_score_test = self.decision_knn(
+                            k_neighbors=k_neighbors,
+                            embedding_train_array=embedding_smote_array,
+                            embedding_test_array=embedding_test_array,
+                            y_pred_train_array=y_pred_label_smote_array,
+                            y_pred_test_array=y_pred_label_test_array,
+                            y_true_test_array=y_true_test_array,
+                        )
+
+                        # accuracy decision
+                        accuracy_decisions = self.accuracy_decision(
+                            decision_test=decision_test
+                        )
+                        for typ_l, acc in zip(type_labels_test, accuracy_decisions):
+                            run["{}/accuracy_{}".format("decision", typ_l)].append(
+                                acc, step=iter
+                            )
 
             current_lr = optimizer.param_groups[0]["lr"]
             run["smote_uniform/current_lr"].append(current_lr, step=iter)
@@ -435,7 +466,7 @@ class AnomalyDetection(DataPreprocessing):
 
             # calculate accuracy for train and test data
             if type_data in ["train", "test"]:
-                accuracy_type_labels = self.accuracy_calculation(
+                accuracy_type_labels = self.accuracy_attribute(
                     y_true_array=y_true_array,
                     y_pred_label_array=y_pred_label_array,
                     type_labels=type_labels,
@@ -448,7 +479,12 @@ class AnomalyDetection(DataPreprocessing):
                 ]
 
             # calculate confusion matrix
-            cm = confusion_matrix(y_true=y_true_array[:, 1], y_pred=y_pred_label_array)
+            if type_data in ["train", "test"]:
+                cm = confusion_matrix(
+                    y_true=y_true_array[:, 1], y_pred=y_pred_label_array
+                )
+            else:
+                cm = confusion_matrix(y_true=y_true_array, y_pred=y_pred_label_array)
             cm_img = self.plot_confusion_matrix(cm=cm, type_data=type_data)
 
             # save metrics in run
@@ -464,14 +500,14 @@ class AnomalyDetection(DataPreprocessing):
 
         return accuracy_dict, embedding_array, y_true_array, y_pred_label_array
 
-    def accuracy_calculation(
+    def accuracy_attribute(
         self,
         y_true_array: np.array,
         y_pred_label_array: np.array,
         type_labels=["train_source_normal", "train_target_normal"],
     ):
         """
-        get the accuracy given y_true_array shape (index, attribute, condition)
+        get the accuracy for attribute given y_true_array shape (index, attribute, condition)
         and y_pred_label_array shape (pred_attribute)
         """
         # get the indices
@@ -505,7 +541,7 @@ class AnomalyDetection(DataPreprocessing):
         y_true_array = y_true_array[:, 0]
 
         # get the id from type_labels
-        ts_ids = [self.indices_timeseries_analysis(key=typ) for typ in type_labels]
+        ts_ids = [self.id_timeseries_analysis(key=typ) for typ in type_labels]
 
         # get the index of each id
         indices = []
@@ -530,22 +566,120 @@ class AnomalyDetection(DataPreprocessing):
 
     def decision_knn(
         self,
+        k_neighbors,
         embedding_train_array,
         embedding_test_array,
         y_pred_train_array,
         y_pred_test_array,
+        y_true_test_array,
     ):
         """
         use knn to make decision if timeseries in test data normal or anomaly
         """
 
         # list to save z score scaler and pretrained knn
-        knn = []
-        scaler = []
+        knn_train = []
+        threshold_train = []
+        scaler_train = []
 
         # train each knn based on the predicted y_pred_train
-        for label in self.num_classes_attribute():
-            
+        for label in range(self.num_classes_attribute()):
+
+            # get the indices of each label from embedding and y pred
+            indices_train = np.where(y_pred_train_array == label)[0]
+
+            # data and fít knn
+            embedding_train_fit_knn = embedding_train_array[indices_train]
+            knn = NearestNeighbors(n_neighbors=k_neighbors)
+            knn.fit(embedding_train_fit_knn)
+
+            # calculate distance
+            distance_train, _ = knn.kneighbors(embedding_train_fit_knn)
+            distance_train = np.mean(distance_train, axis=1)
+
+            # normalize the distance train in range 0 and 1
+            scaler = MinMaxScaler()
+            scaler.fit(distance_train.reshape(-1, 1))
+            distance_train = scaler.transform(distance_train.reshape(-1, 1)).reshape(
+                len(distance_train),
+            )
+
+            # calculate the threshold using percentile
+            threshold = np.percentile(distance_train[:, 1:].mean(axis=1), 99)
+
+            # save to list
+            knn_train.append(knn)
+            threshold_train.append(threshold)
+            scaler_train.append(scaler)
+
+        decision_test = []
+        anomaly_score_test = []
+
+        # loop through each id in test data
+        for id in self.id_timeseries_analysis(keys="test"):
+
+            # find the index of each id and their predict and embedding
+            index_id_test = np.where(y_true_test_array[:, 0] == id)[0]
+            embedding_test_fit_knn = embedding_test_array[index_id_test]
+            label_pred = y_pred_test_array[index_id_test]
+
+            # use knn, scaler and threshold from label pred
+            knn = knn_train[label_pred]
+            scaler = scaler_train[label_pred]
+            threshold = threshold_train[label_pred]
+
+            # find the distance test of embedding test with correspond pred label
+            distance_test, _ = knn.kneighbors(embedding_test_fit_knn)
+            distance_test = np.mean(distance_test, axis=1)
+
+            # normalize as anomaly score and compare with the threshold the make the decision
+            distance_test = scaler.transform(distance_test.reshape(-1, 1)).reshape(
+                len(distance_test),
+            )
+            decision = 0 if distance_test < threshold else 1
+
+            # append to list
+            decision_test.append([id, decision])
+            anomaly_score_test.append([id, distance_test])
+
+        return decision_test, anomaly_score_test
+
+    def accuracy_decision(self, decision_test):
+        """
+        accuracy decision given the prediction of the condition (normal or anomaly)
+        given the decision test shape (id, condition_pred)
+        """
+        # type_labels of test data
+        type_labels = [
+            "test_source_normal",
+            "test_target_normal",
+            "test_source_anomaly",
+            "test_target_anomaly",
+        ]
+
+        # y_true_test_condition_array shape (id, condition_true)
+        condition_true_test = self.timeseries_information()["Condition"].to_numpy()
+        y_true_test_condition_array = np.array(
+            [
+                [id, condition_true_test[id]]
+                for id in self.id_timeseries_analysis(key="test")
+            ]
+        )
+
+        # get the indices for each type_labels
+        indices = self.get_indices(
+            y_true_array=y_true_test_condition_array, type_labels=type_labels
+        )
+
+        # calculate accuracy
+        accuracy = []
+        for idx in indices:
+            y_pred = decision_test[idx, 1]
+            y_true = y_true_test_condition_array[idx, 1]
+            acc = accuracy_score(y_pred=y_pred, y_true=y_true)
+            accuracy.append(acc)
+
+        return accuracy
 
 
 # run this script
@@ -675,11 +809,12 @@ if __name__ == "__main__":
     project = "DCASE2024/wav-test"
     api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
     k_smote = 5
-    batch_size = 8
+    batch_size = 32
     num_instances = 320000
     learning_rate = 0.0001
-    step_warmup = 480
-    step_accumulation = 32
+    step_warmup = 120
+    step_accumulation = 8
+    k_neighbors = 2
     emb_size = None
 
     ad.anomaly_detection(
@@ -691,5 +826,6 @@ if __name__ == "__main__":
         learning_rate=learning_rate,
         step_warmup=step_warmup,
         step_accumulation=step_accumulation,
+        k_neighbors=k_neighbors,
         emb_size=emb_size,
     )
