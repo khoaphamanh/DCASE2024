@@ -110,6 +110,13 @@ class DataPreprocessing:
             self.path_data_name_directory, "{}_train_label_smote.npy".format(data_name)
         )
 
+        # type labels for hmean calculation
+        self.type_labels_hmean = [
+            "{}_{}_{}".format("test", m, d)
+            for d in self.domain_data
+            for m in self.machines
+        ]
+
     def read_raw_data(self):
         """
         Read features, labels from .wav files
@@ -637,18 +644,21 @@ if __name__ == "__main__":
     # indices_timeseries_analyis = data_preprocessing.id_timeseries_analysis(key=kind)
     # print("indices_timeseries_analyis:", indices_timeseries_analyis)
 
-    kind = "test"
-    indices_timeseries_analyis = data_preprocessing.id_timeseries_analysis(key=kind)
-    # print("indices_timeseries_analyis:", indices_timeseries_analyis)
+    # kind = "test"
+    # indices_timeseries_analyis = data_preprocessing.id_timeseries_analysis(key=kind)
+    # # print("indices_timeseries_analyis:", indices_timeseries_analyis)
 
-    data_timeseries_information = data_preprocessing.timeseries_information()
-    # print("data_timeseries_information:", data_timeseries_information)
-    condition = data_timeseries_information["Condition"].to_numpy()
-    # print("condition:", condition)
-    test_condition = []
-    for i in indices_timeseries_analyis:
-        test_condition.append([i, condition[i]])
-    print("test_condition:", test_condition)
+    # data_timeseries_information = data_preprocessing.timeseries_information()
+    # # print("data_timeseries_information:", data_timeseries_information)
+    # condition = data_timeseries_information["Condition"].to_numpy()
+    # # print("condition:", condition)
+    # test_condition = []
+    # for i in indices_timeseries_analyis:
+    #     test_condition.append([i, condition[i]])
+    # print("test_condition:", test_condition)
+
+    type_labels_hmean = data_preprocessing.type_labels_hmean
+    print("type_labels_hmean:", type_labels_hmean)
 
     end = default_timer()
     print(end - start)
