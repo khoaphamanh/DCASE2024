@@ -587,8 +587,8 @@ if __name__ == "__main__":
     # label_unique = data_preprocessing.label_unique()
     # print("label_unique:", label_unique)
 
-    data_timeseries_information = data_preprocessing.timeseries_information()
-    print("data_timeseries_information:", data_timeseries_information)
+    # data_timeseries_information = data_preprocessing.timeseries_information()
+    # print("data_timeseries_information:", data_timeseries_information)
 
     # path_label_unique = data_preprocessing.path_label_unique
     # print("path_label_unique:", path_label_unique)
@@ -609,19 +609,19 @@ if __name__ == "__main__":
     # print("indices_timeseries_analyis:", indices_timeseries_analyis)
     # print("indices_timeseries_analyis keys:", indices_timeseries_analyis.keys())
 
-    train_data, train_label, test_data, test_label = (
-        data_preprocessing.load_data_attribute()
-    )
-    print("train_data:", train_data.shape)
-    print("train_label:", train_label.shape)
-    print("test_data:", test_data.shape)
-    print("test_label:", test_label.shape)
+    # train_data, train_label, test_data, test_label = (
+    #     data_preprocessing.load_data_attribute()
+    # )
+    # print("train_data:", train_data.shape)
+    # print("train_label:", train_label.shape)
+    # print("test_data:", test_data.shape)
+    # print("test_label:", test_label.shape)
 
     # num_classes_attribute = data_preprocessing.num_classes_attribute()
 
-    train_data_smote, train_label_smote = data_preprocessing.smote()
-    print("train_data_smote shape:", train_data_smote.shape)
-    print("train_label_smote:", train_label_smote.shape)
+    # train_data_smote, train_label_smote = data_preprocessing.smote()
+    # print("train_data_smote shape:", train_data_smote.shape)
+    # print("train_label_smote:", train_label_smote.shape)
 
     # label_train_attribute_unique, label_train_attribute_counts = np.unique(
     #     train_label_smote, return_counts=True
@@ -630,16 +630,25 @@ if __name__ == "__main__":
     # print("label_train_unique:", label_train_attribute_unique)
     # print("label_train_counts:", label_train_attribute_counts)
 
-    num_classes_attribute = data_preprocessing.num_classes_attribute()
-    print("num_classes_attribute:", num_classes_attribute)
+    # num_classes_attribute = data_preprocessing.num_classes_attribute()
+    # print("num_classes_attribute:", num_classes_attribute)
 
-    kind = "train_bearing_target"
-    indices_timeseries_analyis = data_preprocessing.id_timeseries_analysis(key=kind)
-    print("indices_timeseries_analyis:", indices_timeseries_analyis)
+    # kind = "train_bearing_target"
+    # indices_timeseries_analyis = data_preprocessing.id_timeseries_analysis(key=kind)
+    # print("indices_timeseries_analyis:", indices_timeseries_analyis)
 
     kind = "test"
     indices_timeseries_analyis = data_preprocessing.id_timeseries_analysis(key=kind)
-    print("indices_timeseries_analyis:", indices_timeseries_analyis)
+    # print("indices_timeseries_analyis:", indices_timeseries_analyis)
+
+    data_timeseries_information = data_preprocessing.timeseries_information()
+    # print("data_timeseries_information:", data_timeseries_information)
+    condition = data_timeseries_information["Condition"].to_numpy()
+    # print("condition:", condition)
+    test_condition = []
+    for i in indices_timeseries_analyis:
+        test_condition.append([i, condition[i]])
+    print("test_condition:", test_condition)
 
     end = default_timer()
     print(end - start)
