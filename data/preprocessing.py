@@ -609,17 +609,19 @@ if __name__ == "__main__":
     # print("indices_timeseries_analyis:", indices_timeseries_analyis)
     # print("indices_timeseries_analyis keys:", indices_timeseries_analyis.keys())
 
-    # train_data, train_label, test_data, test_label = data_preprocessing.load_data_attritbute()
-    # print("train_data:", train_data.shape)
-    # print("train_label:", train_label.shape)
-    # print("test_data:", test_data.shape)
-    # print("test_label:", test_label.shape)
+    train_data, train_label, test_data, test_label = (
+        data_preprocessing.load_data_attribute()
+    )
+    print("train_data:", train_data.shape)
+    print("train_label:", train_label.shape)
+    print("test_data:", test_data.shape)
+    print("test_label:", test_label.shape)
 
     # num_classes_attribute = data_preprocessing.num_classes_attribute()
 
-    # train_data_smote, train_label_smote = data_preprocessing.smote()
-    # print("train_data_smote shape:", train_data_smote.shape)
-    # print("train_label_smote:", train_label_smote.shape)
+    train_data_smote, train_label_smote = data_preprocessing.smote()
+    print("train_data_smote shape:", train_data_smote.shape)
+    print("train_label_smote:", train_label_smote.shape)
 
     # label_train_attribute_unique, label_train_attribute_counts = np.unique(
     #     train_label_smote, return_counts=True
