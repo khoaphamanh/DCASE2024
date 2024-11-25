@@ -331,7 +331,7 @@ class DataPreprocessing:
             ]
             return key_indices_timeseries_analysis
 
-    def load_raw_data(self):
+    def load_data_raw(self):
         """
         load data .pkl file as list
         """
@@ -363,7 +363,7 @@ class DataPreprocessing:
         load data with attribute as label (some bearing labels in test data that not in train data will not included
         """
         # load raw data
-        train_data, train_label, test_data, test_label = self.load_raw_data()
+        train_data, train_label, test_data, test_label = self.load_data_raw()
 
         # find the unique label in train data
         label_train_attribute = train_label[:, 1]
@@ -459,7 +459,7 @@ class DataPreprocessing:
 
         if not all(check_exsist):
             # load data attribute
-            train_data, train_label, test_data, test_label = self.load_data_attribute()
+            train_data, train_label, test_data, test_label = self.load_data_raw()
 
             # find the unique labels and their counts
             label_train_attribute = train_label[:, 1]
@@ -525,6 +525,12 @@ class DataPreprocessing:
             train_label_smote = np.load(self.path_train_label_smote)
 
         return train_data_smote, train_label_smote
+
+    def id_in_decision_but_not_in_attribute(self):
+        """
+        find the id that in decision but not in attribute
+        """
+        pass
 
     def log_melspectrogram(
         self,
