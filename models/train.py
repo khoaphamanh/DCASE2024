@@ -95,7 +95,7 @@ class AnomalyDetection(DataPreprocessing):
             train_label_attribute,
             test_dataset_attribute,
             test_label_attribute,
-        ) = self.load_data_attribute()
+        ) = self.load_data_raw()
 
         # convert to tensor
         train_dataset_attribute = torch.tensor(train_dataset_attribute)
@@ -166,6 +166,7 @@ class AnomalyDetection(DataPreprocessing):
         """
         # fix hyperparameter to suit with vram
         if self.vram < 23:
+            step_warmup = 480
             batch_size = 8
             step_accumulation = 32
 
@@ -403,7 +404,7 @@ class AnomalyDetection(DataPreprocessing):
                     if all(acc > 0.9 for acc in accuracy_smote_dict.values()):
 
                         # use knn to get the decision and anomaly score
-                        decision_test, anomaly_score_test = self.decision_knn(
+                        decision_anomaly_score_test = self.decision_knn(
                             k_neighbors=k_neighbors,
                             embedding_train_array=embedding_smote_array,
                             embedding_test_array=embedding_test_array,
@@ -414,7 +415,7 @@ class AnomalyDetection(DataPreprocessing):
 
                         # accuracy decision
                         accuracy_decisions = self.accuracy_decision(
-                            decision_test=decision_test
+                            decision_anomaly_score_test=decision_anomaly_score_test
                         )
                         for typ_l, acc in zip(type_labels_test, accuracy_decisions):
                             run["{}/accuracy_{}".format("decision", typ_l)].append(
@@ -423,8 +424,7 @@ class AnomalyDetection(DataPreprocessing):
 
                         # anomaly score and hmean
                         hmean_img, hmean_total = self.auc_pauc_hmean(
-                            decision_test=decision_test,
-                            anomaly_score_test=anomaly_score_test,
+                            decision_anomaly_score_test=decision_anomaly_score_test
                         )
 
                         run["score/hmean"].append(hmean_total, step=iter_smote_uniform)
@@ -613,7 +613,7 @@ class AnomalyDetection(DataPreprocessing):
             print("label", label)
             # get the indices of each label from embedding and y pred
             indices_train = np.where(y_pred_train_array == label)[0]
-            print("indices_train:", indices_train)
+            # print("indices_train:", indices_train)
 
             # data and fít knn
             embedding_train_fit_knn = embedding_train_array[indices_train]
@@ -623,7 +623,7 @@ class AnomalyDetection(DataPreprocessing):
             # calculate distance
             distance_train, _ = knn.kneighbors(embedding_train_fit_knn)
             distance_train = np.mean(distance_train[:, 1:], axis=1)
-            print("distance_train:", distance_train)
+            # print("distance_train:", distance_train)
 
             # normalize the distance train in range 0 and 1
             scaler = MinMaxScaler()
@@ -631,11 +631,13 @@ class AnomalyDetection(DataPreprocessing):
             distance_train = scaler.transform(distance_train.reshape(-1, 1)).reshape(
                 len(distance_train),
             )
-            print("distance_train:", distance_train)
+            # print("distance_train_normalize", distance_train)
+            print("distance_train_normalize max", max(distance_train))
+            print("distance_train_normalize min", min(distance_train))
 
             # calculate the threshold using percentile
-            threshold = np.percentile(distance_train, 99)
-            print("threshold:", threshold)
+            # threshold = np.percentile(distance_train, 99)
+            # print("threshold:", threshold)
 
             # save to list
             knn_train.append(knn)
@@ -644,8 +646,7 @@ class AnomalyDetection(DataPreprocessing):
 
             print()
 
-        decision_test = []
-        anomaly_score_test = []
+        decision_anomaly_score_test = []
 
         # loop through each id in test data
         for id in self.id_timeseries_analysis(keys="test"):
@@ -655,37 +656,40 @@ class AnomalyDetection(DataPreprocessing):
             print("id", id)
             print("index_id_test:", index_id_test)
             embedding_test_fit_knn = embedding_test_array[index_id_test]
-            label_pred = y_pred_test_array[index_id_test]
+            label_pred = int(y_pred_test_array[index_id_test][0])
             print("label_pred:", label_pred)
 
             # use knn, scaler and threshold from label pred
             knn = knn_train[label_pred]
             scaler = scaler_train[label_pred]
-            threshold = threshold_train[label_pred]
-            print("threshold:", threshold)
+            # threshold = threshold_train[label_pred]
+            # print("threshold:", threshold)
+            threshold = 1
 
             # find the distance test of embedding test with correspond pred label
             distance_test, _ = knn.kneighbors(embedding_test_fit_knn)
             distance_test = np.mean(distance_test, axis=1)
-            print("distance_test:", distance_test)
+            # print("distance_test:", distance_test)
 
             # normalize as anomaly score and compare with the threshold the make the decision
             distance_test = scaler.transform(distance_test.reshape(-1, 1)).reshape(
                 len(distance_test),
             )
+            distance_test = distance_test[0]
             print("distance_test:", distance_test)
             decision = 0 if distance_test < threshold else 1
             print("decision:", decision)
 
             # append to list
-            decision_test.append([id, decision])
-            anomaly_score_test.append([id, distance_test])
+            decision_anomaly_score_test.append([id, decision, distance_test])
 
-            print("decision_test:", decision_test)
-            print("anomaly_score_test:", anomaly_score_test)
-            print()
+        print("decision_anomaly_score_test:", decision_anomaly_score_test)
+        print()
 
-        return decision_test, anomaly_score_test
+        # convert decision test, anomaly score test to array
+        decision_anomaly_score_test = np.array(decision_anomaly_score_test)
+
+        return decision_anomaly_score_test
 
     def true_test_condition_array(self):
         """
@@ -701,7 +705,7 @@ class AnomalyDetection(DataPreprocessing):
         )
         return y_true_test_condition_array
 
-    def accuracy_decision(self, decision_test):
+    def accuracy_decision(self, decision_anomaly_score_test):
         """
         accuracy decision given the prediction of the condition (normal or anomaly)
         given the decision test shape (id, condition_pred)
@@ -725,14 +729,14 @@ class AnomalyDetection(DataPreprocessing):
         # calculate accuracy
         accuracy = []
         for idx in indices:
-            y_pred = decision_test[idx, 1]
+            y_pred = decision_anomaly_score_test[idx, 1]
             y_true = y_true_test_condition_array[idx, 1]
             acc = accuracy_score(y_pred=y_pred, y_true=y_true)
             accuracy.append(acc)
 
         return accuracy
 
-    def auc_pauc_hmean(self, decision_test, anomaly_score_test):
+    def auc_pauc_hmean(self, decision_anomaly_score_test):
         """
         calculate auc pauc of test machine domain
         given anomaly score shape (id, anomaly score) and dicision test shape (id, condition pred)
@@ -766,9 +770,9 @@ class AnomalyDetection(DataPreprocessing):
             # get the name of label, y_score, y_true
             test_machine_domain = self.type_labels_hmean[i]
             idx = indices[i]
-            y_score = anomaly_score_test[idx, 1]
+            y_score = decision_anomaly_score_test[idx, 2]
             y_true = y_true_test_condition_array[idx, 1]
-            y_pred = decision_test[idx, 1]
+            y_pred = decision_anomaly_score_test[idx, 1]
 
             # calculate auc pauc
             fpr, tpr, thresholds = roc_curve(y_true=y_true, y_score=y_score)
