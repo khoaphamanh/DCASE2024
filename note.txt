@@ -14,3 +14,9 @@ data quá unbalance, với 990 (no attribute) cho class nhiều nhất và 1 cho
 lớn hơn hoặc bằng class it nhất - 1 samples. Không thể làm smote nếu class chỉ có 1 sample. Giải pháp thay thế: augmentation của framework audiomentations (framework này dùng cho np array) 
 sao cho n_samples_class_minority = k_smote + 1. Sau đó dùng smote. Hoặc là đối với class minority dùng thẳng augmentation thay vì smote.
 
+truncate 10s random 12s to 10s
+
+NOTE 25.11.2024
+trong test_data_attribute lúc này sẽ có những label mà trong train_data_attribute không có và tính accuracy sẽ bị thiệt ở bearing target
+knn k_neighbors = 1 (+1) sẽ chỉ tính là 1 neighbor khác. vì chính nó cũng sẽ đc tính là neighbor rồi
+knn sẽ fit trên smote dataset.
