@@ -626,9 +626,9 @@ if __name__ == "__main__":
 
     # num_classes_attribute = data_preprocessing.num_classes_attribute()
 
-    # train_data_smote, train_label_smote = data_preprocessing.smote()
-    # print("train_data_smote shape:", train_data_smote.shape)
-    # print("train_label_smote:", train_label_smote.shape)
+    train_data_smote, train_label_smote = data_preprocessing.smote()
+    print("train_data_smote shape:", train_data_smote.shape)
+    print("train_label_smote:", train_label_smote.shape)
 
     # label_train_attribute_unique, label_train_attribute_counts = np.unique(
     #     train_label_smote, return_counts=True
@@ -661,7 +661,7 @@ if __name__ == "__main__":
     print("type_labels_hmean:", type_labels_hmean)
 
     check = type_labels_hmean[0]
-    out = data_preprocessing.id_timeseries_analysis(key=check)
+    out = data_preprocessing.id_timeseries_analysis(keys=check)
     print("out:", out)
 
     end = default_timer()
