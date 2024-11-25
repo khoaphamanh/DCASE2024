@@ -636,7 +636,7 @@ class AnomalyDetection(DataPreprocessing):
             print("distance_train_normalize min", min(distance_train))
 
             # calculate the threshold using percentile
-            # threshold = np.percentile(distance_train, 99)
+            threshold = np.percentile(distance_train, 99)
             # print("threshold:", threshold)
 
             # save to list
@@ -668,8 +668,19 @@ class AnomalyDetection(DataPreprocessing):
 
             # find the distance test of embedding test with correspond pred label
             distance_test, _ = knn.kneighbors(embedding_test_fit_knn)
+            print("distance_test:", distance_test)
+
+            # elminate the max value in each row, only consider the distance to k_neighbors-1 neighbor (same as in training)
+            max_indices_distance_test = np.argmax(distance_test, axis=1)
+            distance_test = np.array(
+                [
+                    np.delete(row, max_idx)
+                    for row, max_idx in zip(distance_test, max_indices_distance_test)
+                ]
+            )
+            print("distance_test_delete:", distance_test)
             distance_test = np.mean(distance_test, axis=1)
-            # print("distance_test:", distance_test)
+            print("distance_test_mean:", distance_test)
 
             # normalize as anomaly score and compare with the threshold the make the decision
             distance_test = scaler.transform(distance_test.reshape(-1, 1)).reshape(
