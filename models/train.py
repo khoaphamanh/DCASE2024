@@ -11,12 +11,14 @@ from torchinfo import summary
 from sklearn.metrics import confusion_matrix, accuracy_score
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import roc_auc_score, roc_curve
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 import neptune
 from neptune.utils import stringify_unsupported
 from torch.optim.lr_scheduler import LambdaLR
 import seaborn as sns
 import matplotlib.pyplot as plt
+from scipy.stats import hmean
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -162,6 +164,11 @@ class AnomalyDetection(DataPreprocessing):
         """
         main function to find the result
         """
+        # fix hyperparameter to suit with vram
+        if self.vram < 23:
+            batch_size = 8
+            step_accumulation = 32
+
         # init neptune
         run = neptune.init_run(project=project, api_token=api_token)
 
@@ -284,48 +291,52 @@ class AnomalyDetection(DataPreprocessing):
         """
 
         # step report and evaluation
-        step_eval = step_accumulation * 20
+        step_eval = step_accumulation * 50
 
         # loss train
-        loss_smote_total = 0
+        loss_smote_uniform_total = 0
 
-        for iter, (X_smote, y_smote) in enumerate(dataloader_smote_uniform):
+        for iter_smote_uniform, (X_smote_uniform, y_smote_uniform) in enumerate(
+            dataloader_smote_uniform
+        ):
             # model in traning model
             model.train()
             loss.train()
 
             # data to device
-            X_smote = X_smote.to(self.device)
-            y_smote = y_smote.to(self.device)
+            X_smote_uniform = X_smote_uniform.to(self.device)
+            y_smote_uniform = y_smote_uniform.to(self.device)
 
             # forward pass
-            embedding_smote = model(X_smote)
+            embedding_smote_uniform = model(X_smote_uniform)
 
             # calculate the loss
-            loss_smote = loss(embedding_smote, y_smote)
-            loss_smote_total = loss_smote_total + loss_smote.item()
+            loss_smote_uniform = loss(embedding_smote_uniform, y_smote_uniform)
+            loss_smote_uniform_total = (
+                loss_smote_uniform_total + loss_smote_uniform.item()
+            )
 
             # update the loss
-            loss_smote.backward()
+            loss_smote_uniform.backward()
 
             # gradient accumulated and report loss
-            if (iter + 1) % step_accumulation == 0:
+            if (iter_smote_uniform + 1) % step_accumulation == 0:
                 # update model weights and zero grad
                 optimizer.step()
                 optimizer.zero_grad()
 
                 # report loss
-                loss_smote_total = loss_smote_total / step_accumulation
+                loss_smote_uniform_total = loss_smote_uniform_total / step_accumulation
                 run["smote_uniform/loss_smote_total"].append(
-                    loss_smote_total, step=iter
+                    loss_smote_uniform_total, step=iter_smote_uniform
                 )
-                loss_smote_total = 0
+                loss_smote_uniform_total = 0
 
             # update scheduler
             scheduler.step()
 
             # report the loss and evaluation mode every 1000 iteration
-            if (iter + 1) % step_eval == 0:
+            if (iter_smote_uniform + 1) % step_eval == 0:
                 # type_labels
                 type_labels_train = ["train_source_normal", "train_target_normal"]
                 type_labels_test = [
@@ -344,7 +355,7 @@ class AnomalyDetection(DataPreprocessing):
                     y_pred_label_train_array,
                 ) = self.evaluation_mode(
                     run=run,
-                    iter_smote=iter,
+                    iter_smote_uniform=iter_smote_uniform,
                     batch_size=batch_size,
                     model=model,
                     loss=loss,
@@ -361,7 +372,7 @@ class AnomalyDetection(DataPreprocessing):
                     y_pred_label_test_array,
                 ) = self.evaluation_mode(
                     run=run,
-                    iter_smote=iter,
+                    iter_smote_uniform=iter_smote_uniform,
                     batch_size=batch_size,
                     model=model,
                     loss=loss,
@@ -371,7 +382,7 @@ class AnomalyDetection(DataPreprocessing):
                 )
 
                 # only apply knn for anomly detechtion for a good performance
-                if all(acc > 0.6 for acc in accuracy_train_dict.values()):
+                if all(acc > 0.9 for acc in accuracy_train_dict.values()):
                     (
                         accuracy_smote_dict,
                         embedding_smote_array,
@@ -379,7 +390,7 @@ class AnomalyDetection(DataPreprocessing):
                         y_pred_label_smote_array,
                     ) = self.evaluation_mode(
                         run=run,
-                        iter_smote=iter,
+                        iter_smote_uniform=iter_smote_uniform,
                         batch_size=batch_size,
                         model=model,
                         loss=loss,
@@ -389,7 +400,7 @@ class AnomalyDetection(DataPreprocessing):
                     )
 
                     # only use knn if accuracy smote has good performance
-                    if all(acc > 0.6 for acc in accuracy_smote_dict.values()):
+                    if all(acc > 0.9 for acc in accuracy_smote_dict.values()):
 
                         # use knn to get the decision and anomaly score
                         decision_test, anomaly_score_test = self.decision_knn(
@@ -407,16 +418,28 @@ class AnomalyDetection(DataPreprocessing):
                         )
                         for typ_l, acc in zip(type_labels_test, accuracy_decisions):
                             run["{}/accuracy_{}".format("decision", typ_l)].append(
-                                acc, step=iter
+                                acc, step=iter_smote_uniform
                             )
 
+                        # anomaly score and hmean
+                        hmean_img, hmean_total = self.auc_pauc_hmean(
+                            decision_test=decision_test,
+                            anomaly_score_test=anomaly_score_test,
+                        )
+
+                        run["score/hmean"].append(hmean_total, step=iter_smote_uniform)
+                        run["score/auc_pauc_hmean"].append(
+                            hmean_img, step=iter_smote_uniform
+                        )
+                        plt.close()
+
             current_lr = optimizer.param_groups[0]["lr"]
-            run["smote_uniform/current_lr"].append(current_lr, step=iter)
+            run["smote_uniform/current_lr"].append(current_lr, step=iter_smote_uniform)
 
     def evaluation_mode(
         self,
         run: neptune.init_run,
-        iter_smote: int,
+        iter_smote_uniform: int,
         batch_size: int,
         model: nn.Module,
         loss: AdaCosLoss,
@@ -491,11 +514,13 @@ class AnomalyDetection(DataPreprocessing):
             accuracy_dict = {}
             for typ_l, acc in zip(type_labels, accuracy_type_labels):
                 run["{}/accuracy_{}".format(type_data, typ_l)].append(
-                    acc, step=iter_smote
+                    acc, step=iter_smote_uniform
                 )
                 accuracy_dict[typ_l] = acc
 
-            run["{}/confusion_matrix".format(type_data)].append(cm_img, step=iter_smote)
+            run["{}/confusion_matrix".format(type_data)].append(
+                cm_img, step=iter_smote_uniform
+            )
             plt.close()
 
         return accuracy_dict, embedding_array, y_true_array, y_pred_label_array
@@ -541,7 +566,7 @@ class AnomalyDetection(DataPreprocessing):
         y_true_array = y_true_array[:, 0]
 
         # get the id from type_labels
-        ts_ids = [self.id_timeseries_analysis(key=typ) for typ in type_labels]
+        ts_ids = [self.id_timeseries_analysis(keys=typ) for typ in type_labels]
 
         # get the index of each id
         indices = []
@@ -585,17 +610,20 @@ class AnomalyDetection(DataPreprocessing):
         # train each knn based on the predicted y_pred_train
         for label in range(self.num_classes_attribute()):
 
+            print("label", label)
             # get the indices of each label from embedding and y pred
             indices_train = np.where(y_pred_train_array == label)[0]
+            print("indices_train:", indices_train)
 
             # data and fít knn
             embedding_train_fit_knn = embedding_train_array[indices_train]
-            knn = NearestNeighbors(n_neighbors=k_neighbors)
+            knn = NearestNeighbors(n_neighbors=k_neighbors, metric="cosine")
             knn.fit(embedding_train_fit_knn)
 
             # calculate distance
             distance_train, _ = knn.kneighbors(embedding_train_fit_knn)
-            distance_train = np.mean(distance_train, axis=1)
+            distance_train = np.mean(distance_train[:, 1:], axis=1)
+            print("distance_train:", distance_train)
 
             # normalize the distance train in range 0 and 1
             scaler = MinMaxScaler()
@@ -603,14 +631,18 @@ class AnomalyDetection(DataPreprocessing):
             distance_train = scaler.transform(distance_train.reshape(-1, 1)).reshape(
                 len(distance_train),
             )
+            print("distance_train:", distance_train)
 
             # calculate the threshold using percentile
-            threshold = np.percentile(distance_train[:, 1:].mean(axis=1), 99)
+            threshold = np.percentile(distance_train, 99)
+            print("threshold:", threshold)
 
             # save to list
             knn_train.append(knn)
             threshold_train.append(threshold)
             scaler_train.append(scaler)
+
+            print()
 
         decision_test = []
         anomaly_score_test = []
@@ -620,29 +652,54 @@ class AnomalyDetection(DataPreprocessing):
 
             # find the index of each id and their predict and embedding
             index_id_test = np.where(y_true_test_array[:, 0] == id)[0]
+            print("id", id)
+            print("index_id_test:", index_id_test)
             embedding_test_fit_knn = embedding_test_array[index_id_test]
             label_pred = y_pred_test_array[index_id_test]
+            print("label_pred:", label_pred)
 
             # use knn, scaler and threshold from label pred
             knn = knn_train[label_pred]
             scaler = scaler_train[label_pred]
             threshold = threshold_train[label_pred]
+            print("threshold:", threshold)
 
             # find the distance test of embedding test with correspond pred label
             distance_test, _ = knn.kneighbors(embedding_test_fit_knn)
             distance_test = np.mean(distance_test, axis=1)
+            print("distance_test:", distance_test)
 
             # normalize as anomaly score and compare with the threshold the make the decision
             distance_test = scaler.transform(distance_test.reshape(-1, 1)).reshape(
                 len(distance_test),
             )
+            print("distance_test:", distance_test)
             decision = 0 if distance_test < threshold else 1
+            print("decision:", decision)
 
             # append to list
             decision_test.append([id, decision])
             anomaly_score_test.append([id, distance_test])
 
+            print("decision_test:", decision_test)
+            print("anomaly_score_test:", anomaly_score_test)
+            print()
+
         return decision_test, anomaly_score_test
+
+    def true_test_condition_array(self):
+        """
+        y_true_test_condition shape (id, condition_true)
+        """
+        # y_true_test_condition_array shape (id, condition_true)
+        y_true_test_condition = self.timeseries_information()["Condition"].to_numpy()
+        y_true_test_condition_array = np.array(
+            [
+                [id, y_true_test_condition[id]]
+                for id in self.id_timeseries_analysis(keys="test")
+            ]
+        )
+        return y_true_test_condition_array
 
     def accuracy_decision(self, decision_test):
         """
@@ -658,13 +715,7 @@ class AnomalyDetection(DataPreprocessing):
         ]
 
         # y_true_test_condition_array shape (id, condition_true)
-        condition_true_test = self.timeseries_information()["Condition"].to_numpy()
-        y_true_test_condition_array = np.array(
-            [
-                [id, condition_true_test[id]]
-                for id in self.id_timeseries_analysis(key="test")
-            ]
-        )
+        y_true_test_condition_array = self.true_test_condition_array()
 
         # get the indices for each type_labels
         indices = self.get_indices(
@@ -680,6 +731,92 @@ class AnomalyDetection(DataPreprocessing):
             accuracy.append(acc)
 
         return accuracy
+
+    def auc_pauc_hmean(self, decision_test, anomaly_score_test):
+        """
+        calculate auc pauc of test machine domain
+        given anomaly score shape (id, anomaly score) and dicision test shape (id, condition pred)
+        with type_labels_hmean
+        """
+        # y_true_test_condition_array shape (id, condition_true)
+        y_true_test_condition_array = self.true_test_condition_array()
+
+        # get the indices for each type_labels_hmean
+        indices = self.get_indices(
+            y_true_array=y_true_test_condition_array, type_labels=self.type_labels_hmean
+        )
+
+        # fpr_max and fpr_min for pauc
+        fpr_min = 0
+        fpr_max = 0.1
+
+        # create suplots
+        n_cols = 7
+        n_rows = 2
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(25, 15))
+        axes = axes.flatten()
+
+        # list for auc, pauc, hmean
+        auc_test = []
+        pauc_test = []
+
+        # loop through all the axes, each axes is plot of auc and pauc of machine_domain
+        for i in range(len(self.type_labels_hmean)):
+
+            # get the name of label, y_score, y_true
+            test_machine_domain = self.type_labels_hmean[i]
+            idx = indices[i]
+            y_score = anomaly_score_test[idx, 1]
+            y_true = y_true_test_condition_array[idx, 1]
+            y_pred = decision_test[idx, 1]
+
+            # calculate auc pauc
+            fpr, tpr, thresholds = roc_curve(y_true=y_true, y_score=y_score)
+            auc = roc_auc_score(y_true=y_true, y_score=y_score)
+
+            # calculate p auc roc
+            pauc = roc_auc_score(y_true=y_true, y_score=y_score, max_fpr=fpr_max)
+
+            # calculate h mean
+            hmean_machine_domain = hmean([auc, pauc])
+
+            # accuracy machine domain
+            accuraccy_machine_domain = accuracy_score(y_pred=y_pred, y_true=y_true)
+
+            # plot the auc
+            axes[i].plot(fpr, tpr, label=f"AUC = {auc:.4f}")
+
+            # plot the pauc
+            axes[i].fill_between(
+                fpr,
+                tpr,
+                where=(fpr >= fpr_min) & (fpr <= fpr_max),
+                color="orange",
+                alpha=0.3,
+                label=f"PAUC = {pauc:.4f}",
+            )
+
+            # get title and axis
+            axes[i].set_title(
+                "{}\nacc {:.4f} hmean {:4f}".format(
+                    test_machine_domain, accuraccy_machine_domain, hmean_machine_domain
+                )
+            )
+            axes[i].set_xlabel("FPR")
+            axes[i].set_ylabel("TPR")
+            axes[i].legend(loc="lower right")
+
+            # save to list
+            auc_test.append(auc)
+            pauc_test.append(pauc)
+
+        # calculate hmean total
+        hmean_total = hmean(auc_test + pauc_test)
+
+        # suplite of the fig to report the hmean
+        fig.suptitle("Hmean {:.4f}".format(hmean_total))
+
+        return fig, hmean_total
 
 
 # run this script
@@ -809,11 +946,11 @@ if __name__ == "__main__":
     project = "DCASE2024/wav-test"
     api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
     k_smote = 5
-    batch_size = 32
+    batch_size = 32  # 8
     num_instances = 320000
     learning_rate = 0.0001
-    step_warmup = 120
-    step_accumulation = 8
+    step_warmup = 120  # 480
+    step_accumulation = 8  # 32
     k_neighbors = 2
     emb_size = None
 
