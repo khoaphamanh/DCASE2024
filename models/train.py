@@ -813,7 +813,7 @@ class AnomalyDetection(DataPreprocessing):
 
             # get title and axis
             axes[i].set_title(
-                "{}\nacc {:.4f} hmean {:4f}".format(
+                "{}\nacc {:.4f} hmean {:.4f}".format(
                     test_machine_domain, accuraccy_machine_domain, hmean_machine_domain
                 )
             )
