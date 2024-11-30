@@ -697,7 +697,7 @@ class AnomalyDetection(DataPreprocessing):
         print("decision_anomaly_score_test:", decision_anomaly_score_test)
         print()
 
-        # convert decision test, anomaly score test to array
+        # convert decision anomaly score test to array
         decision_anomaly_score_test = np.array(decision_anomaly_score_test)
 
         return decision_anomaly_score_test
