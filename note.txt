@@ -20,3 +20,5 @@ NOTE 25.11.2024
 trong test_data_attribute lúc này sẽ có những label mà trong train_data_attribute không có và tính accuracy sẽ bị thiệt ở bearing target
 knn k_neighbors = 1 (+1) sẽ chỉ tính là 1 neighbor khác. vì chính nó cũng sẽ đc tính là neighbor rồi
 knn sẽ fit trên smote dataset.
+auc trên test_machine_domain pauc trên test_machine_domain, tính hmean_1: 28 giá trị
+auc trên test_machine_domain pauc trên test_machine, tính hmean_2: 21 giá trị
