@@ -1,13 +1,11 @@
 import torch
 from torch import nn
 from beats.beats_custom import BEATsCustom
-from torchinfo import summary
 from torch.utils.data import DataLoader, TensorDataset
 import sys
 import os
 import numpy as np
 from loss import AdaCosLoss
-from torchinfo import summary
 from sklearn.metrics import confusion_matrix, accuracy_score
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import MinMaxScaler
@@ -19,6 +17,7 @@ from torch.optim.lr_scheduler import LambdaLR
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy.stats import hmean
+from datetime import datetime
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -40,12 +39,15 @@ class AnomalyDetection(DataPreprocessing):
         self.path_pretrained_models_directory = os.path.join(
             self.path_models_directory, "pretrained_models"
         )
-        if not os.path.exists(self.path_pretrained_models_directory):
-            import download_models
 
         self.path_beat_iter3_state_dict = os.path.join(
             self.path_pretrained_models_directory, "BEATs_iter3.pt"
         )
+
+        if not os.path.exists(
+            self.path_pretrained_models_directory
+        ) or not os.path.exists(self.self.path_beat_iter3_state_dict):
+            import download_models
 
         # configuration of the model
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -148,6 +150,26 @@ class AnomalyDetection(DataPreprocessing):
 
         return dataloader
 
+    def model_name(hyperparameters: dict):
+        """
+        get the model name to save it
+        """
+        # Get current date and time
+        current_datetime = datetime.now()
+
+        # Format as string
+        datetime_string = current_datetime.strftime("%Y_%m_%d-%H_%M_%S")
+
+        # create model_name
+        model_name = []
+        for k, v in hyperparameters.items():
+            model_name.append("{}_{}".format(k, v))
+
+        model_name.append(datetime_string)
+        model_name = "-".join(model_name) + ".pth"
+
+        return model_name
+
     def anomaly_detection(
         self,
         project,
@@ -242,7 +264,11 @@ class AnomalyDetection(DataPreprocessing):
         hyperparameters["learning_rate"] = learning_rate
         hyperparameters["step_warmup"] = step_warmup
         hyperparameters["step_accumulation"] = step_accumulation
+        hyperparameters["k_neighbors"] = k_neighbors
         hyperparameters["emb_size"] = emb_size
+
+        model_name = self.model_name(hyperparameters=hyperparameters)
+        hyperparameters["model_name"] = model_name
         run["hyperparameters"] = hyperparameters
 
         configuration = {}
@@ -255,21 +281,20 @@ class AnomalyDetection(DataPreprocessing):
         run["configuration"] = configuration
 
         # training attribute classification
-        self.training_loop(
+        model_pretrained, loss_pretrained = self.training_loop(
             run=run,
             dataloader_smote_uniform=dataloader_smote_uniform,
             dataloader_smote_attribute=dataloader_smote_attribute,
             dataloader_train_attribute=dataloader_train_attribute,
             dataloader_test_attribute=dataloader_test_attribute,
-            batch_size=batch_size,
+            hyperparameters=hyperparameters,
             model=model,
-            step_accumulation=step_accumulation,
             loss=loss,
             optimizer=optimizer,
             scheduler=scheduler,
-            k_neighbors=k_neighbors,
-            emb_size=emb_size,
         )
+
+        # save the model
 
     def training_loop(
         self,
@@ -278,18 +303,21 @@ class AnomalyDetection(DataPreprocessing):
         dataloader_smote_attribute: DataLoader,
         dataloader_train_attribute: DataLoader,
         dataloader_test_attribute: DataLoader,
-        batch_size: int,
+        hypeparameters: dict,
         model: nn.Module,
-        step_accumulation: int,
         loss: AdaCosLoss,
         optimizer: torch.optim.AdamW,
         scheduler: LambdaLR,
-        k_neighbors: int,
-        emb_size: int,
     ):
         """
         training loop for smote data
         """
+
+        # get the hyperparameters
+        step_accumulation = hypeparameters["step_accumulation"]
+        batch_size = hypeparameters["batch_size"]
+        emb_size = hypeparameters["emb_size"]
+        k_neighbors = hypeparameters["k_neighbors"]
 
         # step report and evaluation
         step_eval = step_accumulation * 50
@@ -435,6 +463,8 @@ class AnomalyDetection(DataPreprocessing):
 
             current_lr = optimizer.param_groups[0]["lr"]
             run["smote_uniform/current_lr"].append(current_lr, step=iter_smote_uniform)
+
+        return model
 
     def evaluation_mode(
         self,
@@ -610,7 +640,7 @@ class AnomalyDetection(DataPreprocessing):
         # train each knn based on the predicted y_pred_train
         for label in range(self.num_classes_attribute()):
 
-            print("label", label)
+            # print("label", label)
             # get the indices of each label from embedding and y pred
             indices_train = np.where(y_pred_train_array == label)[0]
             # print("indices_train:", indices_train)
@@ -632,8 +662,8 @@ class AnomalyDetection(DataPreprocessing):
                 len(distance_train),
             )
             # print("distance_train_normalize", distance_train)
-            print("distance_train_normalize max", max(distance_train))
-            print("distance_train_normalize min", min(distance_train))
+            # print("distance_train_normalize max", max(distance_train))
+            # print("distance_train_normalize min", min(distance_train))
 
             # calculate the threshold using percentile
             threshold = np.percentile(distance_train, 99)
@@ -644,7 +674,7 @@ class AnomalyDetection(DataPreprocessing):
             threshold_train.append(threshold)
             scaler_train.append(scaler)
 
-            print()
+            # print()
 
         decision_anomaly_score_test = []
 
@@ -693,6 +723,8 @@ class AnomalyDetection(DataPreprocessing):
 
             # append to list
             decision_anomaly_score_test.append([id, decision, distance_test])
+            print("[id, decision, distance_test]", [id, decision, distance_test])
+            print()
 
         print("decision_anomaly_score_test:", decision_anomaly_score_test)
         print()
@@ -767,13 +799,14 @@ class AnomalyDetection(DataPreprocessing):
 
         # create suplots
         n_cols = 7
-        n_rows = 2
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(25, 15))
+        n_rows = 3
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(25, 20))
         axes = axes.flatten()
 
-        # list for auc, pauc, hmean
+        # list for auc, pauc method1 and 2
         auc_test = []
-        pauc_test = []
+        pauc_test_1 = []
+        pauc_test_2 = []
 
         # loop through all the axes, each axes is plot of auc and pauc of machine_domain
         for i in range(len(self.type_labels_hmean)):
@@ -788,9 +821,11 @@ class AnomalyDetection(DataPreprocessing):
             # calculate auc pauc
             fpr, tpr, thresholds = roc_curve(y_true=y_true, y_score=y_score)
             auc = roc_auc_score(y_true=y_true, y_score=y_score)
+            print("auc:", auc)
 
             # calculate p auc roc
             pauc = roc_auc_score(y_true=y_true, y_score=y_score, max_fpr=fpr_max)
+            print("pauc:", pauc)
 
             # calculate h mean
             hmean_machine_domain = hmean([auc, pauc])
@@ -799,39 +834,80 @@ class AnomalyDetection(DataPreprocessing):
             accuraccy_machine_domain = accuracy_score(y_pred=y_pred, y_true=y_true)
 
             # plot the auc
-            axes[i].plot(fpr, tpr, label=f"AUC = {auc:.4f}")
+            name_auc = (
+                "AUC_12" if test_machine_domain in self.type_labels_hmean_1 else "AUC"
+            )
+            axes[i].plot(fpr, tpr, label="{} {:.4f}".format(name_auc, auc))
 
             # plot the pauc
+            name_pauc = (
+                "PAUC_1"
+                if test_machine_domain in self.type_labels_hmean_1
+                else "PAUC_2"
+            )
             axes[i].fill_between(
                 fpr,
                 tpr,
                 where=(fpr >= fpr_min) & (fpr <= fpr_max),
                 color="orange",
                 alpha=0.3,
-                label=f"PAUC = {pauc:.4f}",
+                label="{} {:.4f}".format(name_pauc, pauc),
             )
 
             # get title and axis
             axes[i].set_title(
-                "{}\nacc {:.4f} hmean {:.4f}".format(
-                    test_machine_domain, accuraccy_machine_domain, hmean_machine_domain
-                )
+                "{}\nacc {:.4f}".format(test_machine_domain, accuraccy_machine_domain)
             )
             axes[i].set_xlabel("FPR")
             axes[i].set_ylabel("TPR")
             axes[i].legend(loc="lower right")
 
             # save to list
-            auc_test.append(auc)
-            pauc_test.append(pauc)
+            if test_machine_domain in self.type_labels_hmean_1:
+                pauc_test_1.append(pauc)
+                auc_test.append(auc)
+
+            else:
+                pauc_test_2.append(pauc)
 
         # calculate hmean total
-        hmean_total = hmean(auc_test + pauc_test)
+        print("pauc_test_1:", pauc_test_1)
+        print("pauc_test_2:", pauc_test_2)
+        print("auc_test", auc_test)
+        hmean_total_1 = hmean(auc_test + pauc_test_1)
+        hmean_total_2 = hmean(auc_test + pauc_test_2)
 
         # suplite of the fig to report the hmean
-        fig.suptitle("Hmean {:.4f}".format(hmean_total))
+        fig.suptitle(
+            "Hmean_1 {:.4f} Hmean_2 {:.4f}".format(hmean_total_1, hmean_total_2)
+        )
 
-        return fig, hmean_total
+        return fig, hmean_total_1
+
+    def save_pretrained_model_loss(
+        self,
+        pretrained_model: nn.Module,
+        pretrained_loss: nn.Module,
+        optimizer: torch.optim.AdamW,
+        hyperparameters: dict,
+    ):
+        """
+        save the pretrained model in pretrained_model directory
+        """
+        # get model name
+        model_name = hyperparameters["model_name"]
+        path_pretrained_model_loss = os.path.join(
+            self.path_pretrained_models_directory, model_name
+        )
+        torch.save(
+            {
+                "model_state_dict": pretrained_model.state_dict(),
+                "loss_state_dict": pretrained_loss.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "hyperparameters": hyperparameters,
+            },
+            path_pretrained_model_loss,
+        )
 
 
 # run this script
