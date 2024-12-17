@@ -8,7 +8,7 @@ import numpy as np
 from loss import AdaCosLoss
 from sklearn.metrics import confusion_matrix, accuracy_score
 from sklearn.neighbors import NearestNeighbors
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score, roc_curve
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 import neptune
@@ -46,7 +46,7 @@ class AnomalyDetection(DataPreprocessing):
 
         if not os.path.exists(
             self.path_pretrained_models_directory
-        ) or not os.path.exists(self.self.path_beat_iter3_state_dict):
+        ) or not os.path.exists(self.path_beat_iter3_state_dict):
             import download_models
 
         # configuration of the model
@@ -150,7 +150,7 @@ class AnomalyDetection(DataPreprocessing):
 
         return dataloader
 
-    def model_name(hyperparameters: dict):
+    def model_name(self, hyperparameters: dict):
         """
         get the model name to save it
         """
@@ -232,7 +232,6 @@ class AnomalyDetection(DataPreprocessing):
         # loss
         if emb_size == None:
             emb_size = model.embedding_asp
-            print("emb_size:", emb_size)
         loss = AdaCosLoss(num_classes=self.num_classes_attribute(), emb_size=emb_size)
 
         # optimizer
@@ -281,20 +280,28 @@ class AnomalyDetection(DataPreprocessing):
         run["configuration"] = configuration
 
         # training attribute classification
-        model_pretrained, loss_pretrained = self.training_loop(
-            run=run,
-            dataloader_smote_uniform=dataloader_smote_uniform,
-            dataloader_smote_attribute=dataloader_smote_attribute,
-            dataloader_train_attribute=dataloader_train_attribute,
-            dataloader_test_attribute=dataloader_test_attribute,
-            hyperparameters=hyperparameters,
-            model=model,
-            loss=loss,
-            optimizer=optimizer,
-            scheduler=scheduler,
+        model_pretrained, loss_pretrained, optimizer_pretrained, knn_pretrained = (
+            self.training_loop(
+                run=run,
+                dataloader_smote_uniform=dataloader_smote_uniform,
+                dataloader_smote_attribute=dataloader_smote_attribute,
+                dataloader_train_attribute=dataloader_train_attribute,
+                dataloader_test_attribute=dataloader_test_attribute,
+                hyperparameters=hyperparameters,
+                model=model,
+                loss=loss,
+                optimizer=optimizer,
+                scheduler=scheduler,
+            )
         )
 
-        # save the model
+        # save the pretrained mode, loss, optimizer and hyperparameters
+        self.save_pretrained_model_loss(
+            model_pretrained=model_pretrained,
+            loss_pretrained=loss_pretrained,
+            optimizer=optimizer_pretrained,
+            hyperparameters=hyperparameters,
+        )
 
     def training_loop(
         self,
@@ -303,7 +310,7 @@ class AnomalyDetection(DataPreprocessing):
         dataloader_smote_attribute: DataLoader,
         dataloader_train_attribute: DataLoader,
         dataloader_test_attribute: DataLoader,
-        hypeparameters: dict,
+        hyperparameters: dict,
         model: nn.Module,
         loss: AdaCosLoss,
         optimizer: torch.optim.AdamW,
@@ -314,10 +321,10 @@ class AnomalyDetection(DataPreprocessing):
         """
 
         # get the hyperparameters
-        step_accumulation = hypeparameters["step_accumulation"]
-        batch_size = hypeparameters["batch_size"]
-        emb_size = hypeparameters["emb_size"]
-        k_neighbors = hypeparameters["k_neighbors"]
+        step_accumulation = hyperparameters["step_accumulation"]
+        batch_size = hyperparameters["batch_size"]
+        emb_size = hyperparameters["emb_size"]
+        k_neighbors = hyperparameters["k_neighbors"]
 
         # step report and evaluation
         step_eval = step_accumulation * 50
@@ -431,8 +438,8 @@ class AnomalyDetection(DataPreprocessing):
                     # only use knn if accuracy smote has good performance
                     if all(acc > 0.9 for acc in accuracy_smote_dict.values()):
 
-                        # use knn to get the decision and anomaly score
-                        decision_anomaly_score_test = self.decision_knn(
+                        # use knn to get the decision, anomaly score and knn_pretrained
+                        decision_anomaly_score_test, knn_train = self.decision_knn(
                             k_neighbors=k_neighbors,
                             embedding_train_array=embedding_smote_array,
                             embedding_test_array=embedding_test_array,
@@ -464,7 +471,7 @@ class AnomalyDetection(DataPreprocessing):
             current_lr = optimizer.param_groups[0]["lr"]
             run["smote_uniform/current_lr"].append(current_lr, step=iter_smote_uniform)
 
-        return model
+        return model, loss, optimizer, knn_train
 
     def evaluation_mode(
         self,
@@ -656,7 +663,7 @@ class AnomalyDetection(DataPreprocessing):
             # print("distance_train:", distance_train)
 
             # normalize the distance train in range 0 and 1
-            scaler = MinMaxScaler()
+            scaler = StandardScaler()
             scaler.fit(distance_train.reshape(-1, 1))
             distance_train = scaler.transform(distance_train.reshape(-1, 1)).reshape(
                 len(distance_train),
@@ -666,7 +673,7 @@ class AnomalyDetection(DataPreprocessing):
             # print("distance_train_normalize min", min(distance_train))
 
             # calculate the threshold using percentile
-            threshold = np.percentile(distance_train, 99)
+            threshold = 3
             # print("threshold:", threshold)
 
             # save to list
@@ -692,9 +699,9 @@ class AnomalyDetection(DataPreprocessing):
             # use knn, scaler and threshold from label pred
             knn = knn_train[label_pred]
             scaler = scaler_train[label_pred]
-            # threshold = threshold_train[label_pred]
-            # print("threshold:", threshold)
-            threshold = 1
+            threshold = threshold_train[label_pred]
+            print("threshold:", threshold)
+            # threshold = 1
 
             # find the distance test of embedding test with correspond pred label
             distance_test, _ = knn.kneighbors(embedding_test_fit_knn)
@@ -723,7 +730,10 @@ class AnomalyDetection(DataPreprocessing):
 
             # append to list
             decision_anomaly_score_test.append([id, decision, distance_test])
-            print("[id, decision, distance_test]", [id, decision, distance_test])
+            print(
+                "[id, decision, distance_test, threshold]",
+                [id, decision, distance_test, threshold],
+            )
             print()
 
         print("decision_anomaly_score_test:", decision_anomaly_score_test)
@@ -732,7 +742,7 @@ class AnomalyDetection(DataPreprocessing):
         # convert decision anomaly score test to array
         decision_anomaly_score_test = np.array(decision_anomaly_score_test)
 
-        return decision_anomaly_score_test
+        return decision_anomaly_score_test, knn_train
 
     def true_test_condition_array(self):
         """
@@ -886,9 +896,10 @@ class AnomalyDetection(DataPreprocessing):
 
     def save_pretrained_model_loss(
         self,
-        pretrained_model: nn.Module,
-        pretrained_loss: nn.Module,
+        model_pretrained: nn.Module,
+        loss_pretrained: nn.Module,
         optimizer: torch.optim.AdamW,
+        knn_pretrained: list,
         hyperparameters: dict,
     ):
         """
@@ -901,11 +912,17 @@ class AnomalyDetection(DataPreprocessing):
         )
         torch.save(
             {
-                "model_state_dict": pretrained_model.state_dict(),
-                "loss_state_dict": pretrained_loss.state_dict(),
+                "model_state_dict": model_pretrained.state_dict(),
+                "loss_state_dict": loss_pretrained.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
+                "knn_pretrained": knn_pretrained,
                 "hyperparameters": hyperparameters,
             },
+            path_pretrained_model_loss,
+        )
+
+        print(
+            "pretrained model, loss, optimizer and hyperparameters saved to ",
             path_pretrained_model_loss,
         )
 
@@ -913,7 +930,7 @@ class AnomalyDetection(DataPreprocessing):
 # run this script
 if __name__ == "__main__":
 
-    # create the seed
+    #  seed and data_name
     seed = 1998
     develop_name = "develop"
 
