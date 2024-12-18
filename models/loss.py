@@ -25,26 +25,13 @@ class ArcFaceLoss(nn.Module):
     def forward(self, embedding, y_true):
 
         # calculate logits
-        logits = self.logits(embedding=embedding, y_true=y_true)
-
-        # combine with cross entropy loss
-        ce = nn.CrossEntropyLoss(weight=self.class_weights)
-        loss = ce(logits, y_true)
-
-        return loss
-
-    def logits(self, embedding, y_true):
-
-        # cos(phi) =  (x @ w.t) / (||w.t||.||x|| ) = normalize(x) @ normalize(w.t) / 1 beacause (||normalize(w.T)|| = ||normalize(x)|| )
-        cosine_logits = F.linear(
-            input=F.normalize(embedding), weight=F.normalize(self.w)
-        )
+        logits = self.logits(embedding=embedding)
 
         # onehot vector based on y_true
         onehot = self.onehot_true_label(y_true)  # size (B, num_classes)
 
         # cosine logit of the target class index
-        cosine_target = cosine_logits[onehot == 1]  # size (B,)
+        cosine_target = logits[onehot == 1]  # size (B,)
 
         # calculate cosine phi in target class index with phi = angle + m
         cosine_phi = self.cosine_angle_plus_margin(
@@ -53,12 +40,34 @@ class ArcFaceLoss(nn.Module):
 
         # calculate logit new
         diff = (cosine_phi - cosine_target).unsqueeze(1)
-        logits = cosine_logits + (onehot * diff)  # size (B,num_classes)
+        logits = logits + (onehot * diff)  # size (B,num_classes)
         logits = self.scale * logits
 
-        return logits
+        # combine with cross entropy loss
+        ce = nn.CrossEntropyLoss(weight=self.class_weights)
+        loss = ce(logits, y_true)
+
+        return loss
+
+    def logits(self, embedding):
+        """
+        cosinus of phi with embeding and weights using linear layer
+        """
+        # cos(phi) =  (x @ w.t) / (||w.t||.||x|| ) = normalize(x) @ normalize(w.t) / 1 beacause (||normalize(w.T)|| = ||normalize(x)|| )
+        cosine_logits = F.linear(
+            input=F.normalize(embedding), weight=F.normalize(self.w)
+        )
+
+        return cosine_logits
 
     def onehot_true_label(self, y_true):
+        """
+        y_true = [0,2,1]
+        n_classes = 10
+        onehot = [[1,0,0,0,0,0,0,0,0,0],
+                  [0,0,1,0,0,0,0,0,0,0],
+                  [0,1,0,0,0,0,0,0,0,0]]
+        """
         batch_size = y_true.shape[0]
         onehot = torch.zeros(batch_size, self.num_classes).to(self.device)
         onehot.scatter_(1, y_true.unsqueeze(-1), 1)
@@ -76,7 +85,7 @@ class ArcFaceLoss(nn.Module):
         get the pred labels of given embedding, use for calculate accuracy and in evaluation moded
         """
         with torch.no_grad():
-            logits = self.logits(embedding=embedding, y_true=y_true)
+            logits = self.logits(embedding=embedding)
             y_pred_labels = logits.argmax(dim=1)
         return y_pred_labels
 
