@@ -52,7 +52,7 @@ class BEATsCustom(nn.Module):
 
         # in case embedding is not None
         self.emb_size = emb_size
-        if emb_size is not None:
+        if emb_size not in [None, self.embedding_asp]:
             self.embedding_output = nn.Sequential(
                 nn.ReLU(),
                 nn.Linear(in_features=self.embedding_asp, out_features=self.emb_size),
@@ -74,7 +74,7 @@ class BEATsCustom(nn.Module):
         x = self.asp(x)
 
         # change the embedding dim
-        if self.emb_size is not None:
+        if self.emb_size not in [None, self.embedding_asp]:
             x = self.embedding_output(x)
 
         return x
