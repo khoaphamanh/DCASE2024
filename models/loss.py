@@ -6,7 +6,7 @@ import numpy as np
 
 # Arcface Loss
 class ArcFaceLoss(nn.Module):
-    def __init__(self, num_classes, emb_size, margin, scale, class_weights=None):
+    def __init__(self, num_classes, emb_size, margin=0.5, scale=64, class_weights=None):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_classes = num_classes
