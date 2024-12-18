@@ -69,7 +69,7 @@ class AnomalyDetection(DataPreprocessing):
             for d in self.domain_data
         ]
 
-    def load_model(self, input_size=12, emb_size=None):
+    def load_model(self, input_size=10, emb_size=None):
         # function to load model beats
         model = BEATsCustom(
             path_state_dict=self.path_beat_iter3_state_dict,
@@ -529,6 +529,7 @@ class AnomalyDetection(DataPreprocessing):
             for iter_eval, (X, y) in enumerate(dataloader_attribute):
                 # data to device
                 X = X.to(self.device)
+                y = y.to(self.device)
 
                 # forward pass
                 embedding = model(X)
