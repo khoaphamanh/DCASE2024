@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader, TensorDataset
 import sys
 import os
 import numpy as np
-from loss import AdaCosLoss
+from loss import AdaCosLoss, ArcFaceLoss
 from sklearn.metrics import confusion_matrix, accuracy_score
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
@@ -177,10 +177,13 @@ class AnomalyDetection(DataPreprocessing):
         k_smote,
         batch_size,
         num_instances,
+        loss_type,
         learning_rate,
         step_warmup,
         step_accumulation,
         k_neighbors,
+        margin=None,
+        scale=None,
         emb_size=None,
     ):
         """
@@ -232,7 +235,21 @@ class AnomalyDetection(DataPreprocessing):
         # loss
         if emb_size == None:
             emb_size = model.embedding_asp
-        loss = AdaCosLoss(num_classes=self.num_classes_attribute(), emb_size=emb_size)
+        if loss_type == "adacos":
+            loss = AdaCosLoss(
+                num_classes=self.num_classes_attribute(), emb_size=emb_size
+            )
+        elif loss_type == "arcface":
+            if margin == None:
+                margin = 0.5
+            if scale == None:
+                scale = 64
+            loss = ArcFaceLoss(
+                num_classes=self.num_classes_attribute(),
+                emb_size=emb_size,
+                margin=margin,
+                scale=scale,
+            )
 
         # optimizer
         parameters = list(model.parameters()) + list(loss.parameters())
@@ -265,6 +282,11 @@ class AnomalyDetection(DataPreprocessing):
         hyperparameters["step_accumulation"] = step_accumulation
         hyperparameters["k_neighbors"] = k_neighbors
         hyperparameters["emb_size"] = emb_size
+
+        hyperparameters["loss_type"] = loss_type
+        if loss_type == "arcface":
+            hyperparameters["margin"] = margin
+            hyperparameters["scaler"] = scale
 
         model_name = self.model_name(hyperparameters=hyperparameters)
         hyperparameters["model_name"] = model_name
@@ -300,6 +322,7 @@ class AnomalyDetection(DataPreprocessing):
             model_pretrained=model_pretrained,
             loss_pretrained=loss_pretrained,
             optimizer=optimizer_pretrained,
+            knn_pretrained=knn_pretrained,
             hyperparameters=hyperparameters,
         )
 
@@ -1056,11 +1079,14 @@ if __name__ == "__main__":
     k_smote = 5
     batch_size = 32  # 8
     num_instances = 320000
+    loss_type = "arcface"  # "adacos"
     learning_rate = 0.0001
     step_warmup = 120  # 480
     step_accumulation = 8  # 32
     k_neighbors = 2
     emb_size = None
+    margin = None
+    scale = None
 
     ad.anomaly_detection(
         project=project,
@@ -1068,9 +1094,12 @@ if __name__ == "__main__":
         k_smote=k_smote,
         batch_size=batch_size,
         num_instances=num_instances,
+        loss_type=loss_type,
         learning_rate=learning_rate,
         step_warmup=step_warmup,
         step_accumulation=step_accumulation,
         k_neighbors=k_neighbors,
+        margin=margin,
+        scale=scale,
         emb_size=emb_size,
     )
