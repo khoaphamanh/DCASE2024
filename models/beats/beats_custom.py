@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from .beats import BEATs, BEATsConfig
 from torchinfo import summary
+import torch.nn.functional as F
 
 
 # class Attentive Statistcs Pooling, source https://github.com/TaoRuijie/ECAPA-TDNN/blob/main/model.py#L96
@@ -76,5 +77,8 @@ class BEATsCustom(nn.Module):
         # change the embedding dim
         if self.emb_size not in [None, self.embedding_asp]:
             x = self.embedding_output(x)
+
+        # normalize x to have length equal to 1
+        x = F.normalize(x)
 
         return x
