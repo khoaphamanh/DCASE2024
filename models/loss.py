@@ -83,12 +83,10 @@ class ArcFaceLoss(nn.Module):
         """
         # fix y_true
         mask = y_true > (self.num_classes - 1)
-        print("mask:", mask)
         mask = mask.to(self.device)
         y_true[mask] = torch.randint(0, self.num_classes, size=(mask.sum().item(),)).to(
             self.device
         )
-        print("y_true:", y_true)
 
         # onehot
         batch_size = y_true.shape[0]
@@ -244,12 +242,10 @@ class AdaCosLoss(nn.Module):
         """
         # fix y_true
         mask = y_true > (self.num_classes - 1)
-        print("mask:", mask)
         mask = mask.to(self.device)
         y_true[mask] = torch.randint(0, self.num_classes, size=(mask.sum().item(),)).to(
             self.device
         )
-        print("y_true:", y_true)
 
         # onehot
         batch_size = y_true.shape[0]
