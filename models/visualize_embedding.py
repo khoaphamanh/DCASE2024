@@ -33,6 +33,7 @@ class VisualizeEmbedding(AnomalyDetection):
         emb_size = hyperparameters["emb_size"]
         model = self.load_model(emb_size=emb_size)
         model.load_state_dict(model_state_dict)
+        model = model.to(self.device)
 
         # load loss
         loss_type = hyperparameters["loss_type"]
@@ -50,42 +51,96 @@ class VisualizeEmbedding(AnomalyDetection):
                 scale=scale,
             )
         loss.load_state_dict(loss_state_dict)
+        loss = loss.to(self.device)
 
         return model, loss, knn_pretrained, hyperparameters
 
-    def visualize(self, pretrained_file: str, method="umap"):
+    def get_pretrained_embedding(self, pretrained_file: str):
         """
-        choose method to visualize the embedding
+        evaluation model and loss to get the embedding, y_true and y_pred array
         """
-        # load pretrained model
-        model, loss, knn, hyperparameters = self.load_pretrained_model(
+        # path of pretrained embedding
+        path_pretrained_embedding = self.name_pretrained_embedding(
             pretrained_file=pretrained_file
         )
 
-        # load dataset as TensorDataset
-        k_smote = hyperparameters["k_smote"]
-        dataset_smote, train_dataset_attribute, test_dataset_attribute = (
-            self.load_dataset_tensor(k_smote=k_smote)
-        )
-        # load dataset as Dataloader
-        batch_size = hyperparameters["batch_size"]
+        # check if exsist
+        if not os.path.exists(path_pretrained_embedding):
 
-        dataloader_smote_attribute = self.data_loader(
-            dataset=dataset_smote, batch_size=batch_size
-        )
-        dataloader_train_attribute = self.data_loader(
-            dataset=train_dataset_attribute, batch_size=batch_size
-        )
-        dataloader_test_attribute = self.data_loader(
-            dataset=test_dataset_attribute, batch_size=batch_size
+            # load pretrained model
+            model, loss, knn, hyperparameters = self.load_pretrained_model(
+                pretrained_file=pretrained_file
+            )
+
+            # load dataset as TensorDataset
+            k_smote = hyperparameters["k_smote"]
+            dataset_smote, train_dataset_attribute, test_dataset_attribute = (
+                self.load_dataset_tensor(k_smote=k_smote)
+            )
+
+            # load dataset as Dataloader
+            batch_size = 8 if self.vram < 23 else hyperparameters["batch_size"]
+
+            dataloader_smote_attribute = self.data_loader(
+                dataset=dataset_smote, batch_size=batch_size
+            )
+            dataloader_train_attribute = self.data_loader(
+                dataset=train_dataset_attribute, batch_size=batch_size
+            )
+            dataloader_test_attribute = self.data_loader(
+                dataset=test_dataset_attribute, batch_size=batch_size
+            )
+
+            # get the embedding, y_true and y_pred_label_array
+            embedding_smote, y_true_smote, y_pred_smote = self.get_prediction(
+                dataloader_attribute=dataloader_smote_attribute,
+                model=model,
+                loss=loss,
+                hyperparameters=hyperparameters,
+            )
+
+            embedding_train, y_true_train, y_pred_train = self.get_prediction(
+                dataloader_attribute=dataloader_train_attribute,
+                model=model,
+                loss=loss,
+                hyperparameters=hyperparameters,
+            )
+
+            embedding_test, y_true_test, y_pred_test = self.get_prediction(
+                dataloader_attribute=dataloader_test_attribute,
+                model=model,
+                loss=loss,
+                hyperparameters=hyperparameters,
+            )
+
+            # save the file in directory pretrained_models
+            pretrained_embedding = {
+                "smote": [embedding_smote, y_true_smote, y_pred_smote],
+                "train": [embedding_train, y_true_train, y_pred_train],
+                "test": [embedding_test, y_true_test, y_pred_test],
+            }
+
+            torch.save(pretrained_embedding, path_pretrained_embedding)
+
+        else:
+            pretrained_embedding = torch.load(path_pretrained_embedding)
+
+        return pretrained_embedding
+
+    def name_pretrained_embedding(self, pretrained_file: str):
+        """
+        get the name of pretrained embedding given the pretrained_file
+        """
+        # get the pretrained_embedding_name
+        pretrained_file = pretrained_file.split(".pth")[0]
+        name_pretrained_emnbedding = pretrained_file + "_pretrained_embedding" + ".pth"
+
+        # path pretrained embedding
+        path_pretrained_embedding = os.path.join(
+            self.path_pretrained_models_directory, name_pretrained_emnbedding
         )
 
-        # self.get_prediction(
-        #     dataloader_attribute=dataloader_smote_attribute,
-        #     model=model,
-        #     loss=loss,
-        #     hyperparameters=hyperparameters,
-        # )
+        return path_pretrained_embedding
 
     def get_prediction(
         self,
@@ -102,7 +157,7 @@ class VisualizeEmbedding(AnomalyDetection):
         len_dataset = dataloader_attribute.dataset.tensors[0].shape[0]
         check_y_shape = len(dataloader_attribute.dataset.tensors[1].shape)
 
-        batch_size = hyperparameters["batch_size"]
+        batch_size = 8 if self.vram < 23 else hyperparameters["batch_size"]
         y_pred_label_array = np.empty(shape=(len_dataset,))
         y_true_array = np.empty(shape=(len_dataset,))
         embedding_array = np.empty(shape=(len_dataset, emb_size))
@@ -155,7 +210,12 @@ if __name__ == "__main__":
     # print("seed:", seed)
 
     pretrained_file = "k_smote_5-batch_size_32-num_instances_320000-num_iterations_1250-learning_rate_0.0001-step_warmup_120-step_accumulation_8-k_neighbors_2-emb_size_992-loss_type_adacos-2024_12_19-11_01_41.pth"
-    visualize_embedding.visualize(pretrained_file=pretrained_file)
+    # visualize_embedding.get_pretrained_embedding(pretrained_file=pretrained_file)
+
+    pretrained_embedding = visualize_embedding.name_pretrained_embedding(
+        pretrained_file
+    )
+    print("pretrained_embedding:", pretrained_embedding)
 
     end = default_timer()
     print(end - start)
