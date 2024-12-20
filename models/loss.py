@@ -14,8 +14,9 @@ class ArcFaceLoss(nn.Module):
         self.margin = margin
         self.scale = scale
         self.w = nn.Parameter(
-            data=torch.randn(size=(num_classes, emb_size)), requires_grad=True
-        ).to(self.device)
+            data=torch.randn(size=(num_classes, emb_size)).to(self.device),
+            requires_grad=True,
+        )
 
         if class_weights is not None:
             self.class_weights = class_weights.to(self.device)
@@ -23,15 +24,30 @@ class ArcFaceLoss(nn.Module):
             self.class_weights = class_weights
 
     def forward(self, embedding, y_true):
-
+        """
+        apply adacos using logits and cross entropy loss
+        """
         # calculate logits
-        logits = self.logits(embedding=embedding)
+        logits = self.logits(embedding=embedding, y_true=y_true)
+
+        # combine with cross entropy loss
+        ce = nn.CrossEntropyLoss(weight=self.class_weights)
+        loss = ce(logits, y_true)
+
+        return loss
+
+    def logits(self, embedding, y_true):
+        """
+        get the value logits, step before cross entropy loss
+        """
+        # calculate logits
+        cosine_logits = self.cosine_logits(embedding=embedding)
 
         # onehot vector based on y_true
         onehot = self.onehot_true_label(y_true)  # size (B, num_classes)
 
         # cosine logit of the target class index
-        cosine_target = logits[onehot == 1]  # size (B,)
+        cosine_target = cosine_logits[onehot == 1]  # size (B,)
 
         # calculate cosine phi in target class index with phi = angle + m
         cosine_phi = self.cosine_angle_plus_margin(
@@ -40,16 +56,12 @@ class ArcFaceLoss(nn.Module):
 
         # calculate logit new
         diff = (cosine_phi - cosine_target).unsqueeze(1)
-        logits = logits + (onehot * diff)  # size (B,num_classes)
+        logits = cosine_logits + (onehot * diff)  # size (B,num_classes)
         logits = self.scale * logits
 
-        # combine with cross entropy loss
-        ce = nn.CrossEntropyLoss(weight=self.class_weights)
-        loss = ce(logits, y_true)
+        return logits
 
-        return loss
-
-    def logits(self, embedding):
+    def cosine_logits(self, embedding):
         """
         cosinus of phi with embeding and weights using linear layer
         """
@@ -67,10 +79,22 @@ class ArcFaceLoss(nn.Module):
         onehot = [[1,0,0,0,0,0,0,0,0,0],
                   [0,0,1,0,0,0,0,0,0,0],
                   [0,1,0,0,0,0,0,0,0,0]]
+        if y_true_test contains the label that not in y_true_train the fix y_true_test with random value in num_classes
         """
+        # fix y_true
+        mask = y_true > (self.num_classes - 1)
+        print("mask:", mask)
+        mask = mask.to(self.device)
+        y_true[mask] = torch.randint(0, self.num_classes, size=(mask.sum().item(),)).to(
+            self.device
+        )
+        print("y_true:", y_true)
+
+        # onehot
         batch_size = y_true.shape[0]
         onehot = torch.zeros(batch_size, self.num_classes).to(self.device)
         onehot.scatter_(1, y_true.unsqueeze(-1), 1)
+
         return onehot
 
     def cosine_angle_plus_margin(self, cosine_target):
@@ -80,13 +104,23 @@ class ArcFaceLoss(nn.Module):
         cosine_phi = torch.cos(phi)
         return cosine_phi
 
+    def return_logits(self, embedding, y_true):
+        """
+        return logits in evalualtion mode
+        """
+        # check if array then conver to tensor
+        if isinstance(embedding, np.ndarray):
+            embedding = torch.tensor(embedding).to(self.device).float()
+        with torch.no_grad():
+            logits = self.logits(embedding=embedding, y_true=y_true)
+        return logits
+
     def pred_labels(self, embedding, y_true=None):
         """
         get the pred labels of given embedding, use for calculate accuracy and in evaluation moded
         """
-        with torch.no_grad():
-            logits = self.logits(embedding=embedding)
-            y_pred_labels = logits.argmax(dim=1)
+        logits = self.return_logits(embedding=embedding, y_true=y_true)
+        y_pred_labels = logits.argmax(dim=1)
         return y_pred_labels
 
     def calculate_loss(self, embedding, y_true):
@@ -114,10 +148,14 @@ class AdaCosLoss(nn.Module):
         self.num_classes = num_classes
         self.emb_size = emb_size
         self.w = nn.Parameter(
-            data=torch.randn(size=(num_classes, emb_size)), requires_grad=True
-        ).to(self.device)
-        self.scale = torch.sqrt(torch.tensor(2.0)) * torch.log(
-            torch.tensor(num_classes - 1)
+            data=torch.randn(size=(num_classes, emb_size)).to(self.device),
+            requires_grad=True,
+        )
+        self.scale = nn.Parameter(
+            data=(
+                torch.sqrt(torch.tensor(2.0)) * torch.log(torch.tensor(num_classes - 1))
+            ).to(self.device),
+            requires_grad=False,
         )
 
         if class_weights is not None:
@@ -126,9 +164,24 @@ class AdaCosLoss(nn.Module):
             self.class_weights = class_weights
 
     def forward(self, embedding, y_true):
+        """
+        apply adacos using logits and cross entropy loss
+        """
+        # calculate logits
+        logits = self.logits(embedding=embedding, y_true=y_true)
 
+        # apply cross entropy loss
+        ce = nn.CrossEntropyLoss(weight=self.class_weights)
+        loss = ce(logits, y_true)
+
+        return loss
+
+    def logits(self, embedding, y_true):
+        """
+        get the value logits, step before cross entropy loss
+        """
         # logits
-        cosine_logits = self.logits(embedding)  # size (B, n_classes)
+        cosine_logits = self.cosine_logits(embedding)  # size (B, n_classes)
 
         # angle from cosine_logits
         angle = self.angle(cosine_logits)
@@ -152,23 +205,22 @@ class AdaCosLoss(nn.Module):
                 angle_median = torch.median(angle[onehot == 1])  # size (1,)
 
                 # update scale
-                self.scale = torch.log(B_avg) / torch.cos(
+                new_scale = torch.log(B_avg) / torch.cos(
                     torch.min(
                         torch.pi / 4 * torch.ones_like(angle_median),
                         angle_median,
                     )
                 )
 
+                # assign new_scale to self.scale as nn.Parameter
+                self.scale = nn.Parameter(new_scale.to(self.device))
+
         # calculate new logits
         logits = self.scale * cosine_logits
 
-        # apply cross entropy loss
-        ce = nn.CrossEntropyLoss(weight=self.class_weights)
-        loss = ce(logits, y_true)
+        return logits
 
-        return loss
-
-    def logits(self, embedding, y_true=None):
+    def cosine_logits(self, embedding, y_true=None):
         # cos(phi) =  (x @ w.t) / (||w.t||.||x|| ) = normalize(x) @ normalize(w.t) / 1 beacause (||normalize(w.T)|| = ||normalize(x)|| )
         cosine_logits = F.linear(
             input=F.normalize(embedding), weight=F.normalize(self.w)
@@ -188,13 +240,25 @@ class AdaCosLoss(nn.Module):
         onehot = [[1,0,0,0,0,0,0,0,0,0],
                   [0,0,1,0,0,0,0,0,0,0],
                   [0,1,0,0,0,0,0,0,0,0]]
+        if y_true_test contains the label that not in y_true_train the fix y_true_test with random value in num_classes
         """
+        # fix y_true
+        mask = y_true > (self.num_classes - 1)
+        print("mask:", mask)
+        mask = mask.to(self.device)
+        y_true[mask] = torch.randint(0, self.num_classes, size=(mask.sum().item(),)).to(
+            self.device
+        )
+        print("y_true:", y_true)
+
+        # onehot
         batch_size = y_true.shape[0]
         onehot = torch.zeros(batch_size, self.num_classes).to(self.device)
         onehot.scatter_(1, y_true.unsqueeze(-1), 1)
+
         return onehot
 
-    def return_logits(self, embedding):
+    def return_logits(self, embedding, y_true):
         """
         return logits in evalualtion mode
         """
@@ -202,7 +266,7 @@ class AdaCosLoss(nn.Module):
         if isinstance(embedding, np.ndarray):
             embedding = torch.tensor(embedding).to(self.device).float()
         with torch.no_grad():
-            logits = self.logits(embedding=embedding)
+            logits = self.logits(embedding=embedding, y_true=y_true)
         return logits
 
     def return_softmax_value(self, embedding):
@@ -217,7 +281,7 @@ class AdaCosLoss(nn.Module):
         """
         get the pred labels of given embedding, use for calculate accuracy and in evaluation moded
         """
-        logits = self.return_logits(embedding=embedding)
+        logits = self.return_logits(embedding=embedding, y_true=y_true)
         y_pred_labels = logits.argmax(dim=1)
         return y_pred_labels
 
