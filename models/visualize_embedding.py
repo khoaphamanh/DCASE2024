@@ -6,6 +6,8 @@ import os
 import numpy as np
 from train import AnomalyDetection
 from loss import AdaCosLoss, ArcFaceLoss
+import umap
+from sklearn.manifold import TSNE
 
 
 # class Visualize Embedding for emb_size = 3
@@ -60,7 +62,7 @@ class VisualizeEmbedding(AnomalyDetection):
         evaluation model and loss to get the embedding, y_true and y_pred array
         """
         # path of pretrained embedding
-        path_pretrained_embedding = self.name_pretrained_embedding(
+        path_pretrained_embedding = self.path_pretrained_embedding(
             pretrained_file=pretrained_file
         )
 
@@ -127,9 +129,9 @@ class VisualizeEmbedding(AnomalyDetection):
 
         return pretrained_embedding
 
-    def name_pretrained_embedding(self, pretrained_file: str):
+    def path_pretrained_embedding(self, pretrained_file: str):
         """
-        get the name of pretrained embedding given the pretrained_file
+        path and name of pretrained embedding given the pretrained_file
         """
         # get the pretrained_embedding_name
         pretrained_file = pretrained_file.split(".pth")[0]
@@ -192,6 +194,40 @@ class VisualizeEmbedding(AnomalyDetection):
 
         return embedding_array, y_true_array, y_pred_label_array
 
+    def demension_reduction(self, pretrained_file: str, method: str = "umap"):
+        """
+        visualize the embedding given the pretrained_file, type_data and method
+        """
+        path_dimension_reduction = self.path_dimension_reduction(
+            pretrained_file=pretrained_file, method=method
+        )
+        if not os.path.exists(path_dimension_reduction):
+            if method == "umap":
+                method = umap.UMAP(n_components=3, random_state=42)
+            elif method == "tsne":
+                method = TSNE(n_components=3, random_state=42)
+
+            pretrained_embedding = self.get_pretrained_embedding(
+                pretrained_file=pretrained_file
+            )
+
+    def path_dimension_reduction(self, pretrained_file: str, method: str = "umap"):
+        """
+        path and name of pretrained mbedding given the pretrained_file and method
+        """
+        # get the pretrained_embedding_name
+        pretrained_file = pretrained_file.split(".pth")[0]
+        name_demension_reduction = (
+            pretrained_file + "_pretrained_embedding" + "_{}".format(method) + ".pth"
+        )
+
+        # path pretrained embedding
+        path_demension_reduction = os.path.join(
+            self.path_pretrained_models_directory, name_demension_reduction
+        )
+
+        return path_demension_reduction
+
 
 # run this script
 if __name__ == "__main__":
@@ -210,12 +246,13 @@ if __name__ == "__main__":
     # print("seed:", seed)
 
     pretrained_file = "k_smote_5-batch_size_32-num_instances_320000-num_iterations_1250-learning_rate_0.0001-step_warmup_120-step_accumulation_8-k_neighbors_2-emb_size_992-loss_type_adacos-2024_12_19-11_01_41.pth"
-    # visualize_embedding.get_pretrained_embedding(pretrained_file=pretrained_file)
+    a = visualize_embedding.get_pretrained_embedding(pretrained_file=pretrained_file)
+    print(a.keys())
 
-    pretrained_embedding = visualize_embedding.name_pretrained_embedding(
-        pretrained_file
-    )
-    print("pretrained_embedding:", pretrained_embedding)
+    # pretrained_embedding = visualize_embedding.name_pretrained_embedding(
+    #     pretrained_file
+    # )
+    # print("pretrained_embedding:", pretrained_embedding)
 
     end = default_timer()
     print(end - start)
