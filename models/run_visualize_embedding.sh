@@ -6,11 +6,11 @@
 #SBATCH --output=emb_vis_24-%j.txt   # Logdatei für den merged STDOUT/STDERR output (%j wird durch slurm job-ID ersetzt)
 
 #SBATCH --time=24:00:00             # Maximale Laufzeit des Jobs, bis Slurm diesen abbricht (HH:MM:SS)
-#SBATCH --partition=cpu_normal_stud   # Partition auf der gerechnet werden soll. Ohne Angabe des Parameters wird auf der
+#SBATCH --partition=gpu_normal_stud   # Partition auf der gerechnet werden soll. Ohne Angabe des Parameters wird auf der
                                     #   Default-Partition gerechnet. Es können mehrere angegeben werden, mit Komma getrennt.
 #SBATCH --cpus-per-task=2       # Reservierung von 4 CPUs pro Rechenknoten
 #SBATCH --mem=96G                   # Reservierung von 10GB RAM
-# #SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:1
 # #SBATCH --nodelist=cc1g02
 
 cd /home/phamanh/nobackup/DCASE2024/models
