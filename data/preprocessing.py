@@ -115,6 +115,18 @@ class DataPreprocessing:
             "{}_{}_{}".format("test", m, d)
             for d in self.domain_data
             for m in self.machines
+        ] + ["{}_{}".format("test", m) for m in self.machines]
+
+        # type labels hmean 1 (test_machine_domain) and 2 (test_machine)
+        self.type_labels_hmean_1 = [
+            typ_l
+            for typ_l in self.type_labels_hmean
+            if "source" in typ_l or "target" in typ_l
+        ]
+        self.type_labels_hmean_2 = [
+            typ_l
+            for typ_l in self.type_labels_hmean
+            if typ_l not in self.type_labels_hmean_1
         ]
 
     def read_raw_data(self):
@@ -296,6 +308,14 @@ class DataPreprocessing:
                                 if t in name_timeseries[i]
                                 and m in name_timeseries[i]
                                 and d in name_timeseries[i]
+                            ]
+
+                            # key of the dict indices_timeseries_analyis for type, machine for methode 2
+                            key = "{}_{}".format(t, m, d)
+                            indices_timeseries_analysis[key] = [
+                                i
+                                for i in id_timeseries
+                                if t in name_timeseries[i] and m in name_timeseries[i]
                             ]
 
             # delete len keys == 0
@@ -630,11 +650,12 @@ if __name__ == "__main__":
     # print("test_data:", test_data.shape)
     # print("test_label:", test_label.shape)
 
-    # num_classes_attribute = data_preprocessing.num_classes_attribute()
+    num_classes_attribute = data_preprocessing.num_classes_attribute()
+    print("num_classes_attribute:", num_classes_attribute)
 
-    train_data_smote, train_label_smote = data_preprocessing.smote()
-    print("train_data_smote shape:", train_data_smote.shape)
-    print("train_label_smote:", train_label_smote.shape)
+    # train_data_smote, train_label_smote = data_preprocessing.smote()
+    # print("train_data_smote shape:", train_data_smote.shape)
+    # print("train_label_smote:", train_label_smote.shape)
 
     # label_train_attribute_unique, label_train_attribute_counts = np.unique(
     #     train_label_smote, return_counts=True
@@ -663,12 +684,22 @@ if __name__ == "__main__":
     #     test_condition.append([i, condition[i]])
     # print("test_condition:", test_condition)
 
-    type_labels_hmean = data_preprocessing.type_labels_hmean
-    print("type_labels_hmean:", type_labels_hmean)
+    # type_labels_hmean = data_preprocessing.type_labels_hmean
+    # print("type_labels_hmean len:", len(type_labels_hmean))
+    # print("type_labels_hmean:", type_labels_hmean)
 
-    check = type_labels_hmean[0]
-    out = data_preprocessing.id_timeseries_analysis(keys=check)
-    print("out:", out)
+    # type_labels_hmean_1 = data_preprocessing.type_labels_hmean_1
+    # print("type_labels_hmean_1:", type_labels_hmean_1)
+
+    # type_labels_hmean_2 = data_preprocessing.type_labels_hmean_2
+    # print("type_labels_hmean_2:", type_labels_hmean_2)
+
+    # check = type_labels_hmean[-1]
+    # print("check:", check)
+
+    # out = data_preprocessing.id_timeseries_analysis(keys=check)
+    # print("out len:", len(out))
+    # print("out:", out)
 
     end = default_timer()
     print(end - start)
