@@ -78,7 +78,7 @@ class AnomalyDetection(DataPreprocessing):
         )
         return model
 
-    def load_dataset_tensor(self, k_smote):
+    def load_dataset_tensor(self, k_smote=5):
         """
         load data smote and train, test data as Tensor
         """
@@ -524,7 +524,6 @@ class AnomalyDetection(DataPreprocessing):
             y_true_array = np.empty(shape=(len_dataset,))
 
         embedding_array = np.empty(shape=(len_dataset, emb_size))
-        print("embedding_array shape:", embedding_array.shape)
 
         with torch.no_grad():
             for iter_eval, (X, y) in enumerate(dataloader_attribute):
@@ -534,34 +533,17 @@ class AnomalyDetection(DataPreprocessing):
 
                 # forward pass
                 embedding = model(X)
-                print("embedding:", embedding)
-                print("embedding shape:", embedding.shape)
 
                 # pred the label
                 y_true_label = (
                     y.clone()[:, 1] if type_data in ["train", "test"] else y.clone()
                 )
                 y_true_label = y_true_label.to(self.device)
-                print("y_true_label:", y_true_label)
                 y_pred_label = loss.pred_labels(
                     embedding=embedding, y_true=y_true_label
                 )
-                print("y_pred_label:", y_pred_label)
 
                 # save to array
-                print("iter_eval * batch_size", iter_eval * batch_size)
-                print(
-                    "iter_eval * batch_size + batch_size",
-                    iter_eval * batch_size + batch_size,
-                )
-                print(
-                    "embedding_array slice shape:",
-                    embedding_array[
-                        iter_eval * batch_size : iter_eval * batch_size + batch_size
-                    ].shape,
-                )
-                print("embedding.cpu().numpy() shape:", embedding.cpu().numpy().shape)
-
                 embedding_array[
                     iter_eval * batch_size : iter_eval * batch_size + batch_size
                 ] = embedding.cpu().numpy()
@@ -1104,7 +1086,7 @@ if __name__ == "__main__":
     k_smote = 5
     batch_size = 32  # 8
     num_instances = 320000
-    loss_type = "arcface"  #  "adacos"
+    loss_type = "adacos"  #   "arcface"
     learning_rate = 0.0001
     step_warmup = 120  # 480
     step_accumulation = 8  # 32
