@@ -9,9 +9,10 @@ from umap import UMAP
 from sklearn.manifold import TSNE
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
-import matplotlib
 
-# matplotlib.use("GTK")
+from matplotlib.lines import Line2D
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 
 
 # class Visualize Embedding for emb_size = 3
@@ -276,12 +277,12 @@ class VisualizeEmbedding(AnomalyDetection):
         return normalized_array
 
     def visualize(
-        self, pretrained_file: str, method: str, type_data: str, type_label: str
+        self, pretrained_file: str, method: str, type_data: str, type_label: str = None
     ):
         """
-        visualize the embedding already nomalize
+        Visualize the embedding already normalized using Plotly with two subplots.
         """
-        # get the embedding pretrained and embedding dimension reduction
+        # Get the embedding pretrained and embedding dimension reduction
         embedding_dimension_reduction = self.dimension_reduction(
             pretrained_file=pretrained_file, method=method
         )
@@ -290,48 +291,54 @@ class VisualizeEmbedding(AnomalyDetection):
             pretrained_file=pretrained_file
         )
 
-        # create a figure and axes from subplots
-        rows = 1
-        cols = 2
-        fig, axes = plt.subplots(
-            rows, cols, figsize=(18, 12), subplot_kw={"projection": "3d"}
-        )
-        axes = axes.ravel()
-
-        # get the embedding given type_data
+        # Get the embedding given type_data
         embedding = embedding_dimension_reduction[type_data]
         y_true = embedding_pretrained[type_data][1]
         y_pred = embedding_pretrained[type_data][2]
         y_check = self.y_check_array(y_true_array=y_true, y_pred_array=y_pred)
 
-        for c in range(cols):
+        # Create a figure with two subplots
+        fig = make_subplots(
+            rows=1,
+            cols=2,
+            subplot_titles=["Label Prediction", "True/False Prediction"],
+            specs=[
+                [{"type": "scatter3d"}, {"type": "scatter3d"}]
+            ],  # Define both as 3D scatter plots
+        )
 
-            ax = axes[c]
-
-            # plot gray sphere
-            self.plot_gray_sphere(ax=ax)
-
+        # Plot for each subplot (Label Prediction and True/False Prediction)
+        for c in range(2):
             # y as y_pred or y_check
-            y = y_pred if c % 2 == 0 else y_check
+            y = y_pred if c == 0 else y_check
 
-            # plot scatter
-            scatter = ax.scatter(
-                embedding[:, 0],
-                embedding[:, 1],
-                embedding[:, 2],
-                c=y,
-                cmap="tab20",
-                s=0.1,
+            # Define the scatter plot
+            scatter = go.Scatter3d(
+                x=embedding[:, 0],
+                y=embedding[:, 1],
+                z=embedding[:, 2],
+                mode="markers",
+                marker=dict(
+                    size=3,
+                    color=y,
+                    colorscale="Viridis",  # You can change the colorscale here
+                    colorbar=dict(title="Labels"),
+                ),
+                name="Label Prediction" if c == 0 else "True/False Prediction",
             )
-            # rename the labels on legende
-            handles, labels = scatter.legend_elements()
-            labels = [True if lbl == 1 else False for lbl in y]
-            legend = ax.legend(handles, labels)
-            ax.add_artist(legend)
-            title = "Label Prediction" if c % 2 == 0 else "True/False Prediction"
-            ax.set_title(title)
 
-        fig.suptitle("Visualize Embedding {} {}".format(type_data, method))
+            # Add scatter plot to the appropriate subplot
+            fig.add_trace(
+                scatter, row=1, col=c + 1
+            )  # Add to the first or second column
+
+        # Update layout for the figure
+        fig.update_layout(
+            title=f"Visualize Embedding {type_data} {method}",
+            height=800,  # Adjust height if needed
+            scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z"),
+            showlegend=True,
+        )
 
         return fig
 
@@ -355,9 +362,6 @@ class VisualizeEmbedding(AnomalyDetection):
 
         # Plot the surface of the sphere
         ax.plot_surface(x, y, z, color="gray", alpha=0.1)
-
-        # # Set the aspect of the plot to be equal
-        # ax.set_box_aspect([1, 1, 1])
 
     def y_check_array(self, y_true_array: np.array, y_pred_array: np.array):
         """
@@ -402,9 +406,13 @@ if __name__ == "__main__":
 
     print(embedding_dimension_reduction_tsne.keys())
 
-    fig = visualize_embedding.visualize(pretrained_file=pretrained_file, method="umap")
+    fig = visualize_embedding.visualize(
+        pretrained_file=pretrained_file,
+        method="umap",
+        type_data="train",
+    )
 
-    plt.show()
+    fig.show()
 
     end = default_timer()
     print(end - start)
