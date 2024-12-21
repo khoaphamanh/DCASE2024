@@ -6,7 +6,7 @@ import os
 import numpy as np
 from train import AnomalyDetection
 from loss import AdaCosLoss, ArcFaceLoss
-import umap
+from umap import UMAP
 from sklearn.manifold import TSNE
 
 
@@ -194,24 +194,51 @@ class VisualizeEmbedding(AnomalyDetection):
 
         return embedding_array, y_true_array, y_pred_label_array
 
-    def demension_reduction(self, pretrained_file: str, method: str = "umap"):
+    def dimension_reduction(self, pretrained_file: str, method: str = "umap"):
         """
         visualize the embedding given the pretrained_file, type_data and method
         """
-        path_dimension_reduction = self.path_dimension_reduction(
+        # path demension reduction
+        path_embedding_dimension_reduction = self.path_embedding_dimension_reduction(
             pretrained_file=pretrained_file, method=method
         )
-        if not os.path.exists(path_dimension_reduction):
-            if method == "umap":
-                method = umap.UMAP(n_components=3, random_state=42)
-            elif method == "tsne":
-                method = TSNE(n_components=3, random_state=42)
 
+        # if not then train with method to reduce the dimension
+        if not os.path.exists(path_embedding_dimension_reduction):
+            if method == "umap":
+                method = UMAP(n_components=3, random_state=self.seed)
+            elif method == "tsne":
+                method = TSNE(n_components=3, random_state=self.seed)
+
+            # load the pretrained embedding
             pretrained_embedding = self.get_pretrained_embedding(
                 pretrained_file=pretrained_file
             )
 
-    def path_dimension_reduction(self, pretrained_file: str, method: str = "umap"):
+            # calculate the dimension reduction and normalize
+            embedding_dimension_reduction = {}
+            for type_data, array in pretrained_embedding.items():
+                embedding, y_true, y_pred = array
+                embedding_reduction = method.fit_transform(embedding)
+                embedding_reduction_normalize = self.l2_normalization(
+                    embedding=embedding_reduction
+                )
+                embedding_dimension_reduction[type_data] = embedding_reduction_normalize
+
+            torch.save(
+                embedding_dimension_reduction, path_embedding_dimension_reduction
+            )
+
+        else:
+            embedding_dimension_reduction = torch.load(
+                path_embedding_dimension_reduction
+            )
+
+        return embedding_dimension_reduction
+
+    def path_embedding_dimension_reduction(
+        self, pretrained_file: str, method: str = "umap"
+    ):
         """
         path and name of pretrained mbedding given the pretrained_file and method
         """
@@ -227,6 +254,31 @@ class VisualizeEmbedding(AnomalyDetection):
         )
 
         return path_demension_reduction
+
+    def l2_normalization(self, embedding):
+        """
+        normalize the embedding (array) to have len 1 each row
+        """
+        # Compute L2 norm for each row: l2 = sqrt (row)
+        norms = np.linalg.norm(embedding, axis=1, keepdims=True)
+
+        # Avoid division by zero (add a small epsilon)
+        epsilon = 1e-10
+        norms = np.maximum(norms, epsilon)
+
+        # Normalize each row to have L2 norm = 1
+        normalized_array = embedding / norms
+
+        return normalized_array
+
+    def visualize(self, pretrained_file: str, method: str):
+        """
+        visualize the embedding already nomalize
+        """
+        # get the embedding dimension reduction
+        embedding_dimension_reduction = self.dimension_reduction(
+            pretrained_file=pretrained_file, method=method
+        )
 
 
 # run this script
@@ -246,8 +298,17 @@ if __name__ == "__main__":
     # print("seed:", seed)
 
     pretrained_file = "k_smote_5-batch_size_32-num_instances_320000-num_iterations_1250-learning_rate_0.0001-step_warmup_120-step_accumulation_8-k_neighbors_2-emb_size_992-loss_type_adacos-2024_12_19-11_01_41.pth"
-    a = visualize_embedding.get_pretrained_embedding(pretrained_file=pretrained_file)
-    print(a.keys())
+    embedding_dimension_reduction_umap = visualize_embedding.dimension_reduction(
+        pretrained_file=pretrained_file, method="umap"
+    )
+
+    print(embedding_dimension_reduction_umap.keys())
+
+    embedding_dimension_reduction_tsne = visualize_embedding.dimension_reduction(
+        pretrained_file=pretrained_file, method="tsne"
+    )
+
+    print(embedding_dimension_reduction_tsne.keys())
 
     # pretrained_embedding = visualize_embedding.name_pretrained_embedding(
     #     pretrained_file
