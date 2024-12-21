@@ -1,5 +1,4 @@
 import torch
-from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 from beats.beats_custom import BEATsCustom
 import os
@@ -8,6 +7,11 @@ from train import AnomalyDetection
 from loss import AdaCosLoss, ArcFaceLoss
 from umap import UMAP
 from sklearn.manifold import TSNE
+from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.pyplot as plt
+import matplotlib
+
+# matplotlib.use("GTK")
 
 
 # class Visualize Embedding for emb_size = 3
@@ -275,10 +279,98 @@ class VisualizeEmbedding(AnomalyDetection):
         """
         visualize the embedding already nomalize
         """
-        # get the embedding dimension reduction
+        # get the embedding pretrained and embedding dimension reduction
         embedding_dimension_reduction = self.dimension_reduction(
             pretrained_file=pretrained_file, method=method
         )
+        type_data = list(embedding_dimension_reduction.keys())
+
+        embedding_pretrained = self.get_pretrained_embedding(
+            pretrained_file=pretrained_file
+        )
+
+        # create a figure and axes from subplots
+        rows = 3
+        cols = 2
+        fig, axes = plt.subplots(
+            rows, cols, figsize=(15, 5), subplot_kw={"projection": "3d"}
+        )
+        axes = axes.ravel()
+
+        for r in range(rows):
+            for c in range(cols):
+                idx = r * cols + c
+                ax = axes[idx - 1]
+
+                # plot gray sphere
+                self.plot_gray_sphere(ax=ax)
+
+                # get the embedding
+                typ_dat = type_data[r]
+                embedding = embedding_dimension_reduction[typ_dat]
+
+                # get the labels y_true, y_pred and y_check
+                y_true = embedding_pretrained[typ_dat][1]
+                y_pred = embedding_pretrained[typ_dat][2]
+                y_check = self.y_check_array(y_true_array=y_true, y_pred_array=y_true)
+                y = y_pred if idx % 2 == 0 else y_check
+
+                # plot scatter
+                scatter = ax.scatter(
+                    embedding[:, 0],
+                    embedding[:, 1],
+                    embedding[:, 2],
+                    c=y,
+                    cmap="hsv",
+                )
+                # rename the labels on legende
+                handles, labels = scatter.legend_elements()
+                labels = (
+                    ["True" if label == "1" else "False" for label in labels]
+                    if idx % 2 == 1
+                    else labels
+                )
+                legend = ax.legend(handles, labels)
+                ax.add_artist(legend)
+                title = "Label Prediction" if idx % 2 == 0 else "True/False Prediction"
+                ax.set_title(title)
+
+        fig.suptitle("Visualize Embedding {}".format(method))
+
+        return fig
+
+    def plot_3d_embedding_label_prediction(self):
+        """
+        plot the 3D label prediction from embedding
+        """
+
+    def plot_gray_sphere(self, ax):
+        """
+        plot the gray sphere with radius 1
+        """
+        # Define the grid for spherical coordinates
+        u = np.linspace(0, 2 * np.pi, 100)  # Longitude
+        v = np.linspace(0, np.pi, 100)  # Latitude
+
+        # Parametric equations for a sphere
+        x = np.sin(v)[:, None] * np.cos(u)  # X = sin(latitude) * cos(longitude)
+        y = np.sin(v)[:, None] * np.sin(u)  # Y = sin(latitude) * sin(longitude)
+        z = np.cos(v)[:, None]  # Z = cos(latitude)
+
+        # Plot the surface of the sphere
+        ax.plot_surface(x, y, z, color="gray", alpha=0.0)
+
+        # # Set the aspect of the plot to be equal
+        # ax.set_box_aspect([1, 1, 1])
+
+    def y_check_array(self, y_true_array: np.array, y_pred_array: np.array):
+        """
+        get the check between y_true and y_pred with 1 is correct prediction and 0 is false prediction
+        """
+        # check the prediction with 1 correct prediction and 0 false prediction
+        y_check = np.equal(y_true_array, y_pred_array)
+        y_check = y_check.astype(int)
+        return y_check
 
 
 # run this script
@@ -303,6 +395,10 @@ if __name__ == "__main__":
     )
 
     print(embedding_dimension_reduction_umap.keys())
+    for i in embedding_dimension_reduction_umap:
+
+        check = embedding_dimension_reduction_umap[i]
+        print("check shape:", check.shape)
 
     embedding_dimension_reduction_tsne = visualize_embedding.dimension_reduction(
         pretrained_file=pretrained_file, method="tsne"
@@ -310,10 +406,9 @@ if __name__ == "__main__":
 
     print(embedding_dimension_reduction_tsne.keys())
 
-    # pretrained_embedding = visualize_embedding.name_pretrained_embedding(
-    #     pretrained_file
-    # )
-    # print("pretrained_embedding:", pretrained_embedding)
+    fig = visualize_embedding.visualize(pretrained_file=pretrained_file, method="umap")
+
+    plt.show()
 
     end = default_timer()
     print(end - start)
