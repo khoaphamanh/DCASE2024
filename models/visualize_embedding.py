@@ -293,14 +293,15 @@ class VisualizeEmbedding(AnomalyDetection):
         rows = 3
         cols = 2
         fig, axes = plt.subplots(
-            rows, cols, figsize=(15, 5), subplot_kw={"projection": "3d"}
+            rows, cols, figsize=(18, 12), subplot_kw={"projection": "3d"}
         )
         axes = axes.ravel()
+        plt.subplots_adjust(wspace=0.4, hspace=0.4)
 
         for r in range(rows):
             for c in range(cols):
                 idx = r * cols + c
-                ax = axes[idx - 1]
+                ax = axes[idx]
 
                 # plot gray sphere
                 self.plot_gray_sphere(ax=ax)
@@ -312,7 +313,7 @@ class VisualizeEmbedding(AnomalyDetection):
                 # get the labels y_true, y_pred and y_check
                 y_true = embedding_pretrained[typ_dat][1]
                 y_pred = embedding_pretrained[typ_dat][2]
-                y_check = self.y_check_array(y_true_array=y_true, y_pred_array=y_true)
+                y_check = self.y_check_array(y_true_array=y_true, y_pred_array=y_pred)
                 y = y_pred if idx % 2 == 0 else y_check
 
                 # plot scatter
@@ -321,15 +322,12 @@ class VisualizeEmbedding(AnomalyDetection):
                     embedding[:, 1],
                     embedding[:, 2],
                     c=y,
-                    cmap="hsv",
+                    cmap="tab20",
+                    s=0.1,
                 )
                 # rename the labels on legende
                 handles, labels = scatter.legend_elements()
-                labels = (
-                    ["True" if label == "1" else "False" for label in labels]
-                    if idx % 2 == 1
-                    else labels
-                )
+
                 legend = ax.legend(handles, labels)
                 ax.add_artist(legend)
                 title = "Label Prediction" if idx % 2 == 0 else "True/False Prediction"
@@ -358,7 +356,7 @@ class VisualizeEmbedding(AnomalyDetection):
         z = np.cos(v)[:, None]  # Z = cos(latitude)
 
         # Plot the surface of the sphere
-        ax.plot_surface(x, y, z, color="gray", alpha=0.0)
+        ax.plot_surface(x, y, z, color="gray", alpha=0.1)
 
         # # Set the aspect of the plot to be equal
         # ax.set_box_aspect([1, 1, 1])
