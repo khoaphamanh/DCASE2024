@@ -275,7 +275,9 @@ class VisualizeEmbedding(AnomalyDetection):
 
         return normalized_array
 
-    def visualize(self, pretrained_file: str, method: str):
+    def visualize(
+        self, pretrained_file: str, method: str, type_data: str, type_label: str
+    ):
         """
         visualize the embedding already nomalize
         """
@@ -283,57 +285,53 @@ class VisualizeEmbedding(AnomalyDetection):
         embedding_dimension_reduction = self.dimension_reduction(
             pretrained_file=pretrained_file, method=method
         )
-        type_data = list(embedding_dimension_reduction.keys())
 
         embedding_pretrained = self.get_pretrained_embedding(
             pretrained_file=pretrained_file
         )
 
         # create a figure and axes from subplots
-        rows = 3
+        rows = 1
         cols = 2
         fig, axes = plt.subplots(
             rows, cols, figsize=(18, 12), subplot_kw={"projection": "3d"}
         )
         axes = axes.ravel()
-        plt.subplots_adjust(wspace=0.4, hspace=0.4)
 
-        for r in range(rows):
-            for c in range(cols):
-                idx = r * cols + c
-                ax = axes[idx]
+        # get the embedding given type_data
+        embedding = embedding_dimension_reduction[type_data]
+        y_true = embedding_pretrained[type_data][1]
+        y_pred = embedding_pretrained[type_data][2]
+        y_check = self.y_check_array(y_true_array=y_true, y_pred_array=y_pred)
 
-                # plot gray sphere
-                self.plot_gray_sphere(ax=ax)
+        for c in range(cols):
 
-                # get the embedding
-                typ_dat = type_data[r]
-                embedding = embedding_dimension_reduction[typ_dat]
+            ax = axes[c]
 
-                # get the labels y_true, y_pred and y_check
-                y_true = embedding_pretrained[typ_dat][1]
-                y_pred = embedding_pretrained[typ_dat][2]
-                y_check = self.y_check_array(y_true_array=y_true, y_pred_array=y_pred)
-                y = y_pred if idx % 2 == 0 else y_check
+            # plot gray sphere
+            self.plot_gray_sphere(ax=ax)
 
-                # plot scatter
-                scatter = ax.scatter(
-                    embedding[:, 0],
-                    embedding[:, 1],
-                    embedding[:, 2],
-                    c=y,
-                    cmap="tab20",
-                    s=0.1,
-                )
-                # rename the labels on legende
-                handles, labels = scatter.legend_elements()
+            # y as y_pred or y_check
+            y = y_pred if c % 2 == 0 else y_check
 
-                legend = ax.legend(handles, labels)
-                ax.add_artist(legend)
-                title = "Label Prediction" if idx % 2 == 0 else "True/False Prediction"
-                ax.set_title(title)
+            # plot scatter
+            scatter = ax.scatter(
+                embedding[:, 0],
+                embedding[:, 1],
+                embedding[:, 2],
+                c=y,
+                cmap="tab20",
+                s=0.1,
+            )
+            # rename the labels on legende
+            handles, labels = scatter.legend_elements()
+            labels = [True if lbl == 1 else False for lbl in y]
+            legend = ax.legend(handles, labels)
+            ax.add_artist(legend)
+            title = "Label Prediction" if c % 2 == 0 else "True/False Prediction"
+            ax.set_title(title)
 
-        fig.suptitle("Visualize Embedding {}".format(method))
+        fig.suptitle("Visualize Embedding {} {}".format(type_data, method))
 
         return fig
 
