@@ -8,9 +8,6 @@ from loss import AdaCosLoss, ArcFaceLoss
 from umap import UMAP
 from sklearn.manifold import TSNE
 from mpl_toolkits.mplot3d import Axes3D
-import matplotlib.pyplot as plt
-
-from matplotlib.lines import Line2D
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 
@@ -280,7 +277,8 @@ class VisualizeEmbedding(AnomalyDetection):
         self, pretrained_file: str, method: str, type_data: str, type_label: str = None
     ):
         """
-        Visualize the embedding already normalized using Plotly with two subplots.
+        Visualize the embedding already normalized using Plotly with only the Label Prediction subplot.
+        Show corresponding y value when hovering over a point.
         """
         # Get the embedding pretrained and embedding dimension reduction
         embedding_dimension_reduction = self.dimension_reduction(
@@ -297,50 +295,49 @@ class VisualizeEmbedding(AnomalyDetection):
         y_pred = embedding_pretrained[type_data][2]
         y_check = self.y_check_array(y_true_array=y_true, y_pred_array=y_pred)
 
-        # Create a figure with two subplots
+        # Create a figure with one subplot (only "Label Prediction")
         fig = make_subplots(
             rows=1,
-            cols=2,
-            subplot_titles=["Label Prediction", "True/False Prediction"],
-            specs=[
-                [{"type": "scatter3d"}, {"type": "scatter3d"}]
-            ],  # Define both as 3D scatter plots
+            cols=1,
+            subplot_titles=["Label Prediction"],
+            specs=[[{"type": "scatter3d"}]],  # One 3D scatter plot
         )
 
-        # Plot for each subplot (Label Prediction and True/False Prediction)
-        for c in range(2):
-            # y as y_pred or y_check
-            y = y_pred if c == 0 else y_check
+        # Define the scatter plot for Label Prediction
+        scatter = go.Scatter3d(
+            x=embedding[:, 0],
+            y=embedding[:, 1],
+            z=embedding[:, 2],
+            mode="markers",
+            marker=dict(
+                size=3,
+                color=y_true,  # Use y_true for coloring the points
+                colorscale="Viridis",  # You can change the colorscale here
+                colorbar=dict(title="Labels"),
+            ),
+            name="Label Prediction",  # Specify the name for the legend (no "trace 0")
+            customdata=np.stack([y_true, y_pred], axis=-1),  # Include y_true and y_pred
+            hovertemplate=(
+                "X: %{x:.2f}<br>"
+                "Y: %{y:.2f}<br>"
+                "Z: %{z:.2f}<br>"
+                "True Label: %{customdata[0]}<br>"  # Display y_true
+                "Predicted Label: %{customdata[1]}"  # Display y_pred
+            ),
+        )
 
-            # Define the scatter plot
-            scatter = go.Scatter3d(
-                x=embedding[:, 0],
-                y=embedding[:, 1],
-                z=embedding[:, 2],
-                mode="markers",
-                marker=dict(
-                    size=3,
-                    color=y,
-                    colorscale="Viridis",  # You can change the colorscale here
-                    colorbar=dict(title="Labels"),
-                ),
-                name="Label Prediction" if c == 0 else "True/False Prediction",
-            )
-
-            # Add scatter plot to the appropriate subplot
-            fig.add_trace(
-                scatter, row=1, col=c + 1
-            )  # Add to the first or second column
+        # Add scatter plot to the subplot
+        fig.add_trace(
+            scatter, row=1, col=1
+        )  # Add to the first column (the only subplot)
 
         # Update layout for the figure
         fig.update_layout(
             title=f"Visualize Embedding {type_data} {method}",
-            height=800,  # Adjust height if needed
-            scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z"),
-            showlegend=True,
         )
 
-        return fig
+        # Show the figure
+        fig.show()
 
     def plot_3d_embedding_label_prediction(self):
         """
@@ -409,10 +406,8 @@ if __name__ == "__main__":
     fig = visualize_embedding.visualize(
         pretrained_file=pretrained_file,
         method="umap",
-        type_data="train",
+        type_data="smote",
     )
-
-    fig.show()
 
     end = default_timer()
     print(end - start)
