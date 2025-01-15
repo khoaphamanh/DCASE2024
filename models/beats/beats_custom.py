@@ -68,7 +68,11 @@ class BEATsCustom(nn.Module):
 
         return beats
 
-    def forward(self, x):
+    def forward(self, x=None, input_ids=None, **kwargs):
+
+        # Determine the input tensor
+        if input_ids is not None:
+            x = input_ids
 
         # beats and asp
         x = self.beats.extract_features(x)[0]
