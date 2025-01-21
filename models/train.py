@@ -356,7 +356,7 @@ class AnomalyDetection(DataPreprocessing):
 
         hyperparameters["HPO"] = HPO
         if HPO:
-            hyperparameters["trial"] = stringify_unsupported(trial)
+            hyperparameters["trial"] = trial
 
         hyperparameters["loss_type"] = loss_type
         if loss_type == "arcface":
@@ -499,7 +499,7 @@ class AnomalyDetection(DataPreprocessing):
 
                 # pruned for hpo
                 if HPO:
-                    trial.report(loss_smote_uniform_total)
+                    trial.report(loss_smote_uniform_total, step=iter_smote_uniform)
                     if trial.should_prune() or np.isnan(loss_smote_uniform_total):
                         raise optuna.exceptions.TrialPruned()
 
@@ -1299,12 +1299,12 @@ if __name__ == "__main__":
         # create directory for HPO
         directory_hpo = "HPO"
         path_directory_models = ad.path_directory_models
-        path_HPO = os.path.join(path_directory_models, directory_hpo)
-        os.makedirs(path_HPO, exist_ok=True)
+        path_directory_HPO = os.path.join(path_directory_models, directory_hpo)
+        os.makedirs(path_directory_HPO, exist_ok=True)
 
         # data base file for hpo
         db_hpo = "hpo.db"
-        path_db_hpo = os.path.join(path_HPO, db_hpo)
+        path_db_hpo = os.path.join(path_directory_HPO, db_hpo)
         db_hpo_sqlite = "sqlite:///{}".format(path_db_hpo)
 
         # optuna configuration
@@ -1323,16 +1323,14 @@ if __name__ == "__main__":
             )
             num_instances = trial.suggest_int(
                 name="num_instances",
-                low=batch_size * 100,
-                high=batch_size * 100000,
-                log=True,
+                low=batch_size * 10,
+                high=batch_size * 50000,
+                step=batch_size * 10,
             )
 
-            step_warmup = trial.suggest_int(
-                name="step_warmup", low=2, high=720, log=True
-            )
+            step_warmup = trial.suggest_int(name="step_warmup", low=8, high=256, step=2)
             step_accumulation = trial.suggest_int(
-                name="step_accumulation", low=8, high=100, log=True
+                name="step_accumulation", low=1, high=32, step=1
             )
 
             loss_train_smote_uniform = ad.anomaly_detection(
@@ -1397,6 +1395,13 @@ if __name__ == "__main__":
             print("  Params: ")
             for key, value in best_trial_params.items():
                 print("    {}: {}".format(key, value))
+
+        # load the hpo trials as csv
+        csv_hpo = "hpo_trials.csv"
+        path_csv_hpo = os.path.join(path_directory_HPO, csv_hpo)
+        trials_df = study.trials_dataframe()
+        trials_df.to_csv(path_csv_hpo)
+
     else:
         ad.anomaly_detection(
             project=project,
