@@ -284,19 +284,11 @@ class VisualizeEmbedding(AnomalyDetection):
         type_data: str = None,
         type_label: str = None,
     ):
-        """ """
-        # type data to plot
+        """Visualize 3D embeddings for multiple datasets."""
+        # Type data to plot
         type_data = ["smote", "train", "test"]
 
-        # create a fig plot for plotly
-        fig = make_subplots(
-            rows=2,
-            cols=2,
-            subplot_titles=type_data,
-            # specs=[[{"type": "scatter3d"}]],  # One 3D scatter plot
-        )
-
-        # position of each plot
+        # Define domains for each plot
         domains = [
             dict(x=[0, 0.5], y=[0.5, 1]),  # Top-left
             dict(x=[0.5, 1], y=[0.5, 1]),  # Top-right
@@ -306,72 +298,69 @@ class VisualizeEmbedding(AnomalyDetection):
         # Create a color palette
         colors = px.colors.qualitative.Plotly
 
-        # embedding pretrained from pretrained model
+        # Embedding pretrained from the pretrained model
         embedding_pretrained = self.get_pretrained_embedding(
             pretrained_file=pretrained_file
         )
-        hyperparmeters = embedding_pretrained["hyperparameters"]
+        hyperparameters = embedding_pretrained["hyperparameters"]
 
-        # check emb_size if use demension reduction or not
-        emb_size = hyperparmeters["emb_size"]
+        # Check emb_size to determine if dimensionality reduction is needed
+        emb_size = hyperparameters["emb_size"]
         if emb_size != 3:
             embedding_dimension_reduction = self.dimension_reduction(
                 pretrained_file=pretrained_file, method=method
             )
 
-        # create each plot for each type data: smote, train, test
+        # Create the figure
+        fig = go.Figure()
+        annotations = []
+
+        # Create each plot for "smote", "train", "test"
         for idx_plot, typ in enumerate(type_data):
             y_true = embedding_pretrained[typ][1]
             y_pred = embedding_pretrained[typ][2]
 
             if emb_size != 3:
                 embedding = embedding_dimension_reduction[typ]
-
             else:
                 embedding = embedding_pretrained[typ][0]
 
+            # Add each label as a scatter plot
             for label_number, label_strings in self.label_unique().items():
-
-                # get index of each label prediction
                 indices_this_label_pred = np.where(y_pred == label_number)
 
-                # indexing each pred label
+                # Indexing for current label
                 embedding_this_label_pred = embedding[indices_this_label_pred]
                 y_pred_this_label_pred = y_pred[indices_this_label_pred]
                 y_true_this_label_pred = y_true[indices_this_label_pred]
 
-                # Define the scatter plot for Label Prediction
-                scatter = go.Scatter3d(
-                    x=embedding_this_label_pred[:, 0],
-                    y=embedding_this_label_pred[:, 1],
-                    z=embedding_this_label_pred[:, 2],
-                    mode="markers",
-                    marker=dict(
-                        size=3,
-                        color=colors[
-                            label_number % len(colors)
-                        ],  # Use y_true for coloring the points
-                        colorbar=dict(title="Labels"),
-                    ),
-                    customdata=np.stack(
-                        [y_true_this_label_pred, y_pred_this_label_pred], axis=-1
-                    ),  # Include y_true and y_pred
-                    hovertemplate=(
-                        "X: %{x:.2f}<br>"
-                        "Y: %{y:.2f}<br>"
-                        "Z: %{z:.2f}<br>"
-                        "True Label: %{customdata[0]}<br>"  # Display y_true
-                        "Predicted Label: %{customdata[1]}"  # Display y_pred
-                    ),
+                # Add scatter3d for the label
+                fig.add_trace(
+                    go.Scatter3d(
+                        x=embedding_this_label_pred[:, 0],
+                        y=embedding_this_label_pred[:, 1],
+                        z=embedding_this_label_pred[:, 2],
+                        mode="markers",
+                        marker=dict(
+                            size=3,
+                            color=colors[label_number % len(colors)],
+                        ),
+                        customdata=np.stack(
+                            [y_true_this_label_pred, y_pred_this_label_pred], axis=-1
+                        ),
+                        hovertemplate=(
+                            "X: %{x:.2f}<br>"
+                            "Y: %{y:.2f}<br>"
+                            "Z: %{z:.2f}<br>"
+                            "True Label: %{customdata[0]}<br>"
+                            "Predicted Label: %{customdata[1]}"
+                        ),
+                        name=f"{label_number} {label_strings}",
+                        scene=f"scene{idx_plot+1}",
+                    )
                 )
-                fig.add_trace(scatter)
 
-            # create each scene for each big plot (data)
-            fig.update_traces(
-                selector=dict(name="{} {}".format(label_number, label_strings)),
-                scene="scene{}".format(idx_plot + 1),
-            )
-
+            # Update layout for the current scene
             fig.update_layout(
                 **{
                     f"scene{idx_plot+1}": dict(
@@ -383,9 +372,24 @@ class VisualizeEmbedding(AnomalyDetection):
                 }
             )
 
-        # Update layout for the figure
+            # Add annotation for the current plot, this is for the title each plot
+            annotations.append(
+                dict(
+                    x=domains[idx_plot]["x"][0]
+                    + (domains[idx_plot]["x"][1] - domains[idx_plot]["x"][0]) / 2,
+                    y=domains[idx_plot]["y"][1] - 0.05,  # Slightly above the subplot
+                    text=typ,  # Subplot name
+                    showarrow=False,
+                    xref="paper",
+                    yref="paper",
+                    font=dict(size=16, color="black"),
+                )
+            )
+
+        # Update the overall layout
         fig.update_layout(
-            title=f"Visualize Embedding {type_data} {method}",
+            title=f"Visualize Embedding {method}",
+            annotations=annotations,
         )
 
         # Show the figure
