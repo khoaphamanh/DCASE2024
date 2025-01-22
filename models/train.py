@@ -345,9 +345,7 @@ class AnomalyDetection(DataPreprocessing):
             hyperparameters["lora_dropout"] = lora_dropout
         hyperparameters["batch_size"] = batch_size
         hyperparameters["num_instances"] = num_instances
-        hyperparameters["num_iterations"] = num_instances // (
-            batch_size * step_accumulation
-        )
+        hyperparameters["num_iterations"] = num_instances // batch_size + 1
         hyperparameters["learning_rate"] = learning_rate
         hyperparameters["step_warmup"] = step_warmup
         hyperparameters["step_accumulation"] = step_accumulation
@@ -437,10 +435,19 @@ class AnomalyDetection(DataPreprocessing):
 
         # step report and evaluation
         step_eval = step_accumulation * 50
+        step_lr = 0
 
         # loss train
         loss_smote_uniform_total = 0
-        loss_smote_uniform_total_list = []  # use this for HPO
+
+        # accuracy as objective function for HPO
+        if HPO:
+            y_pred_smote_uniform_array = np.empty(
+                batch_size * step_accumulation,
+            )
+            y_true_smote_uniform_array = np.empty(
+                batch_size * step_accumulation,
+            )
 
         for iter_smote_uniform, (X_smote_uniform, y_smote_uniform) in enumerate(
             dataloader_smote_uniform
@@ -464,10 +471,27 @@ class AnomalyDetection(DataPreprocessing):
 
             # update the loss
             loss_smote_uniform.backward()
-            # print("iter_smote_uniform:", iter_smote_uniform)
-            # print("loss_smote_uniform:", loss_smote_uniform)
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            # torch.nn.utils.clip_grad_norm_(loss.parameters(), max_norm=1.0)
+
+            # save to array if HPO
+            if HPO:
+                # iter for saved array y_true y_pred
+                iter_smote_uniform_accumulated = iter_smote_uniform % step_accumulation
+                y_true_smote_uniform_array[
+                    iter_smote_uniform_accumulated
+                    * batch_size : iter_smote_uniform_accumulated
+                    * batch_size
+                    + batch_size
+                ] = y_smote_uniform.cpu().numpy()
+
+                y_pred_smote_uniform = loss.pred_labels(
+                    embedding=embedding_smote_uniform, y_true=y_smote_uniform
+                )
+                y_pred_smote_uniform_array[
+                    iter_smote_uniform_accumulated
+                    * batch_size : iter_smote_uniform_accumulated
+                    * batch_size
+                    + batch_size
+                ] = y_pred_smote_uniform.cpu().numpy()
 
             # gradient accumulated and report loss
             if (iter_smote_uniform + 1) % step_accumulation == 0:
@@ -477,37 +501,43 @@ class AnomalyDetection(DataPreprocessing):
 
                 # report loss
                 loss_smote_uniform_total = loss_smote_uniform_total / step_accumulation
-                # print("iter_smote_uniform:", iter_smote_uniform)
-                # print("loss_smote_uniform_total:", loss_smote_uniform_total)
-
-                # print("check gradient model")
-                # for name, param in model.named_parameters():
-                #     if torch.isnan(param).any() or torch.isnan(param.grad).any():
-                #         print(f"NaN detected in {name}")
-
-                # print("check gradient loss")
-                # for name, param in loss.named_parameters():
-                #     if torch.isnan(param).any() or torch.isnan(param.grad).any():
-                #         print(f"NaN detected in {name}")
-
                 run["smote_uniform/loss_smote_total"].append(
                     loss_smote_uniform_total, step=iter_smote_uniform
                 )
 
-                # append to list for hpo
-                loss_smote_uniform_total_list.append(loss_smote_uniform_total)
-
                 # pruned for hpo
                 if HPO:
-                    trial.report(loss_smote_uniform_total, step=iter_smote_uniform)
+                    # accuracy smote as ojective function
+                    accuracy_smote_uniform = accuracy_score(
+                        y_true=y_true_smote_uniform_array,
+                        y_pred=y_pred_smote_uniform_array,
+                    )
+                    run["smote_uniform/accuracy_smote_uniform"].append(
+                        accuracy_smote_uniform, step=iter_smote_uniform
+                    )
+
+                    trial.report(accuracy_smote_uniform, step=iter_smote_uniform)
                     if trial.should_prune() or np.isnan(loss_smote_uniform_total):
                         raise optuna.exceptions.TrialPruned()
 
                 # reset loss_smote_uniform_total
                 loss_smote_uniform_total = 0
 
+            # log the learning rate
+            current_lr = optimizer.param_groups[0]["lr"]
+            run["smote_uniform/current_lr"].append(current_lr, step=iter_smote_uniform)
+            step_lr = step_lr + 1
+
             # update scheduler
             scheduler.step()
+
+            # # log the learning rate
+            # current_lr = optimizer.param_groups[0]["lr"]
+            # run["smote_uniform/current_lr"].append(current_lr, step=iter_smote_uniform)
+            # step_lr = step_lr + 1
+
+            # # update scheduler
+            # scheduler.step()
 
             # report the loss and evaluation mode every 1000 iteration
             if (iter_smote_uniform + 1) % step_eval == 0 and not HPO:
@@ -606,11 +636,8 @@ class AnomalyDetection(DataPreprocessing):
                         )
                         plt.close()
 
-            current_lr = optimizer.param_groups[0]["lr"]
-            run["smote_uniform/current_lr"].append(current_lr, step=iter_smote_uniform)
-
         if HPO:
-            return loss_smote_uniform_total_list[-1]
+            return accuracy_smote_uniform
         else:
             return model, loss, optimizer, knn_train
 
@@ -1303,21 +1330,22 @@ if __name__ == "__main__":
         os.makedirs(path_directory_HPO, exist_ok=True)
 
         # data base file for hpo
-        db_hpo = "hpo.db"
+        db_hpo = "hpo_1.db"
         path_db_hpo = os.path.join(path_directory_HPO, db_hpo)
         db_hpo_sqlite = "sqlite:///{}".format(path_db_hpo)
 
         # optuna configuration
         sampler = optuna.samplers.TPESampler(seed=ad.seed)
         pruner = optuna.pruners.MedianPruner()
-        study_name = "dcase24"
+        study_name = "dcase24_1"
         n_trials_onetime = 1
         n_trials_total = 100
 
         # objective functions
         def objective(trial: optuna.trial.Trial):
             # hyperparameters
-            project = "DCASE2024/dcase-HPO"
+            project = "DCASE2024/dcase-HPO1"
+
             learning_rate = trial.suggest_float(
                 name="learning_rate", low=1e-6, high=1e-1, log=True
             )
@@ -1329,11 +1357,22 @@ if __name__ == "__main__":
             )
 
             step_warmup = trial.suggest_int(name="step_warmup", low=8, high=256, step=2)
-            step_accumulation = trial.suggest_int(
-                name="step_accumulation", low=1, high=32, step=1
+
+            # more hyperparameters
+            loss_type = trial.suggest_categorical(
+                name="loss_type", choices=["adacos", "arcface"]
+            )
+            margin = trial.suggest_float(name="margin", low=0, high=5, step=0.1)
+            scale = trial.suggest_float(name="scale", low=2, high=256, step=2)
+
+            lora = trial.suggest_categorical(name="lora", choices=[True, False])
+            r = trial.suggest_int(name="r", low=8, high=256, step=2)
+            lora_alpha = trial.suggest_int(name="lora_alpha", low=2, high=128, step=2)
+            lora_dropout = trial.suggest_float(
+                name="lora_dropout", low=0.1, high=1, step=0.1
             )
 
-            loss_train_smote_uniform = ad.anomaly_detection(
+            accuracy_smote_uniform = ad.anomaly_detection(
                 project=project,
                 api_token=api_token,
                 k_smote=k_smote,
@@ -1355,12 +1394,12 @@ if __name__ == "__main__":
                 trial=trial,
             )
 
-            return loss_train_smote_uniform
+            return accuracy_smote_uniform
 
         # check if
         if not os.path.isfile(path_db_hpo):
             study = optuna.create_study(
-                direction="minimize",
+                direction="maximize",
                 study_name=study_name,
                 storage=db_hpo_sqlite,
                 sampler=sampler,
@@ -1397,12 +1436,19 @@ if __name__ == "__main__":
                 print("    {}: {}".format(key, value))
 
         # load the hpo trials as csv
-        csv_hpo = "hpo_trials.csv"
+        csv_hpo = "hpo_trials_1.csv"
         path_csv_hpo = os.path.join(path_directory_HPO, csv_hpo)
         trials_df = study.trials_dataframe()
         trials_df.to_csv(path_csv_hpo)
 
     else:
+        # project = "DCASE2024/wav-test"
+        # learning_rate = 0.05658312158356384
+        # num_instances = 72960
+        # step_warmup = 116
+        # step_accumulation = 1
+        # emb_size = 3
+
         ad.anomaly_detection(
             project=project,
             api_token=api_token,
