@@ -221,12 +221,15 @@ class VisualizeEmbedding(AnomalyDetection):
             # calculate the dimension reduction and normalize
             embedding_dimension_reduction = {}
             for type_data, array in pretrained_embedding.items():
-                embedding, y_true, y_pred = array
-                embedding_reduction = method.fit_transform(embedding)
-                embedding_reduction_normalize = self.l2_normalization(
-                    embedding=embedding_reduction
-                )
-                embedding_dimension_reduction[type_data] = embedding_reduction_normalize
+                if type(array) == list:
+                    embedding, y_true, y_pred = array
+                    embedding_reduction = method.fit_transform(embedding)
+                    embedding_reduction_normalize = self.l2_normalization(
+                        embedding=embedding_reduction
+                    )
+                    embedding_dimension_reduction[type_data] = (
+                        embedding_reduction_normalize
+                    )
 
             torch.save(
                 embedding_dimension_reduction, path_embedding_dimension_reduction
@@ -292,7 +295,13 @@ class VisualizeEmbedding(AnomalyDetection):
             subplot_titles=type_data,
             # specs=[[{"type": "scatter3d"}]],  # One 3D scatter plot
         )
-        positions = [[0, 0], [0, 1], [1, 0], [1, 1]]
+
+        # position of each plot
+        domains = [
+            dict(x=[0, 0.5], y=[0.5, 1]),  # Top-left
+            dict(x=[0.5, 1], y=[0.5, 1]),  # Top-right
+            dict(x=[0, 0.5], y=[0, 0.5]),  # Bottom-left
+        ]
 
         # Create a color palette
         colors = px.colors.qualitative.Plotly
@@ -310,48 +319,69 @@ class VisualizeEmbedding(AnomalyDetection):
                 pretrained_file=pretrained_file, method=method
             )
 
-        for idx, typ in enumerate(type_data):
+        # create each plot for each type data: smote, train, test
+        for idx_plot, typ in enumerate(type_data):
             y_true = embedding_pretrained[typ][1]
             y_pred = embedding_pretrained[typ][2]
 
             if emb_size != 3:
-                embedding = embedding_dimension_reduction[type_data]
+                embedding = embedding_dimension_reduction[typ]
 
             else:
                 embedding = embedding_pretrained[typ][0]
 
-            # y_check = self.y_check_array(y_true_array=y_true, y_pred_array=y_pred)
+            for label_number, label_strings in self.label_unique().items():
 
-            # Create a figure with one subplot (only "Label Prediction")
+                # get index of each label prediction
+                indices_this_label_pred = np.where(y_pred == label_number)
 
-            # Define the scatter plot for Label Prediction
-            scatter = go.Scatter3d(
-                x=embedding[:, 0],
-                y=embedding[:, 1],
-                z=embedding[:, 2],
-                mode="markers",
-                marker=dict(
-                    size=3,
-                    color=colors[i % len(colors)],  # Use y_true for coloring the points
-                    colorscale="Viridis",  # You can change the colorscale here
-                    colorbar=dict(title="Labels"),
-                ),
-                name="Label Prediction",  # Specify the name for the legend (no "trace 0")
-                customdata=np.stack(
-                    [y_true, y_pred], axis=-1
-                ),  # Include y_true and y_pred
-                hovertemplate=(
-                    "X: %{x:.2f}<br>"
-                    "Y: %{y:.2f}<br>"
-                    "Z: %{z:.2f}<br>"
-                    "True Label: %{customdata[0]}<br>"  # Display y_true
-                    "Predicted Label: %{customdata[1]}"  # Display y_pred
-                ),
+                # indexing each pred label
+                embedding_this_label_pred = embedding[indices_this_label_pred]
+                y_pred_this_label_pred = y_pred[indices_this_label_pred]
+                y_true_this_label_pred = y_true[indices_this_label_pred]
+
+                # Define the scatter plot for Label Prediction
+                scatter = go.Scatter3d(
+                    x=embedding_this_label_pred[:, 0],
+                    y=embedding_this_label_pred[:, 1],
+                    z=embedding_this_label_pred[:, 2],
+                    mode="markers",
+                    marker=dict(
+                        size=3,
+                        color=colors[
+                            label_number % len(colors)
+                        ],  # Use y_true for coloring the points
+                        colorbar=dict(title="Labels"),
+                    ),
+                    customdata=np.stack(
+                        [y_true_this_label_pred, y_pred_this_label_pred], axis=-1
+                    ),  # Include y_true and y_pred
+                    hovertemplate=(
+                        "X: %{x:.2f}<br>"
+                        "Y: %{y:.2f}<br>"
+                        "Z: %{z:.2f}<br>"
+                        "True Label: %{customdata[0]}<br>"  # Display y_true
+                        "Predicted Label: %{customdata[1]}"  # Display y_pred
+                    ),
+                )
+                fig.add_trace(scatter)
+
+            # create each scene for each big plot (data)
+            fig.update_traces(
+                selector=dict(name="{} {}".format(label_number, label_strings)),
+                scene="scene{}".format(idx_plot + 1),
             )
 
-            # Add scatter plot to the subplot
-            pos = positions[idx]
-            fig.add_trace(scatter, row=pos[0], col=pos[1])
+            fig.update_layout(
+                **{
+                    f"scene{idx_plot+1}": dict(
+                        domain=domains[idx_plot],
+                        xaxis=dict(backgroundcolor="white", gridcolor="lightgrey"),
+                        yaxis=dict(backgroundcolor="white", gridcolor="lightgrey"),
+                        zaxis=dict(backgroundcolor="white", gridcolor="lightgrey"),
+                    )
+                }
+            )
 
         # Update layout for the figure
         fig.update_layout(
@@ -419,11 +449,11 @@ if __name__ == "__main__":
         check = embedding_dimension_reduction_umap[i]
         print("check shape:", check.shape)
 
-    embedding_dimension_reduction_tsne = visualize_embedding.dimension_reduction(
-        pretrained_file=pretrained_file, method="tsne"
-    )
+    # embedding_dimension_reduction_tsne = visualize_embedding.dimension_reduction(
+    #     pretrained_file=pretrained_file, method="tsne"
+    # )
 
-    print(embedding_dimension_reduction_tsne.keys())
+    # print(embedding_dimension_reduction_tsne.keys())
 
     fig = visualize_embedding.visualize(
         pretrained_file=pretrained_file,
