@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 from beats.beats_custom import BEATsCustom
 import os
 import numpy as np
@@ -7,9 +7,9 @@ from train import AnomalyDetection
 from loss import AdaCosLoss, ArcFaceLoss
 from umap import UMAP
 from sklearn.manifold import TSNE
-from mpl_toolkits.mplot3d import Axes3D
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+import plotly.express as px
 
 
 # class Visualize Embedding for emb_size = 3
@@ -122,6 +122,7 @@ class VisualizeEmbedding(AnomalyDetection):
                 "smote": [embedding_smote, y_true_smote, y_pred_smote],
                 "train": [embedding_train, y_true_train, y_pred_train],
                 "test": [embedding_test, y_true_test, y_pred_test],
+                "hyperparameters": hyperparameters,
             }
 
             torch.save(pretrained_embedding, path_pretrained_embedding)
@@ -274,62 +275,83 @@ class VisualizeEmbedding(AnomalyDetection):
         return normalized_array
 
     def visualize(
-        self, pretrained_file: str, method: str, type_data: str, type_label: str = None
+        self,
+        pretrained_file: str,
+        method: str = None,
+        type_data: str = None,
+        type_label: str = None,
     ):
-        """
-        Visualize the embedding already normalized using Plotly with only the Label Prediction subplot.
-        Show corresponding y value when hovering over a point.
-        """
-        # Get the embedding pretrained and embedding dimension reduction
-        embedding_dimension_reduction = self.dimension_reduction(
-            pretrained_file=pretrained_file, method=method
-        )
+        """ """
+        # type data to plot
+        type_data = ["smote", "train", "test"]
 
+        # create a fig plot for plotly
+        fig = make_subplots(
+            rows=2,
+            cols=2,
+            subplot_titles=type_data,
+            # specs=[[{"type": "scatter3d"}]],  # One 3D scatter plot
+        )
+        positions = [[0, 0], [0, 1], [1, 0], [1, 1]]
+
+        # Create a color palette
+        colors = px.colors.qualitative.Plotly
+
+        # embedding pretrained from pretrained model
         embedding_pretrained = self.get_pretrained_embedding(
             pretrained_file=pretrained_file
         )
+        hyperparmeters = embedding_pretrained["hyperparameters"]
 
-        # Get the embedding given type_data
-        embedding = embedding_dimension_reduction[type_data]
-        y_true = embedding_pretrained[type_data][1]
-        y_pred = embedding_pretrained[type_data][2]
-        y_check = self.y_check_array(y_true_array=y_true, y_pred_array=y_pred)
+        # check emb_size if use demension reduction or not
+        emb_size = hyperparmeters["emb_size"]
+        if emb_size != 3:
+            embedding_dimension_reduction = self.dimension_reduction(
+                pretrained_file=pretrained_file, method=method
+            )
 
-        # Create a figure with one subplot (only "Label Prediction")
-        fig = make_subplots(
-            rows=1,
-            cols=1,
-            subplot_titles=["Label Prediction"],
-            specs=[[{"type": "scatter3d"}]],  # One 3D scatter plot
-        )
+        for idx, typ in enumerate(type_data):
+            y_true = embedding_pretrained[typ][1]
+            y_pred = embedding_pretrained[typ][2]
 
-        # Define the scatter plot for Label Prediction
-        scatter = go.Scatter3d(
-            x=embedding[:, 0],
-            y=embedding[:, 1],
-            z=embedding[:, 2],
-            mode="markers",
-            marker=dict(
-                size=3,
-                color=y_true,  # Use y_true for coloring the points
-                colorscale="Viridis",  # You can change the colorscale here
-                colorbar=dict(title="Labels"),
-            ),
-            name="Label Prediction",  # Specify the name for the legend (no "trace 0")
-            customdata=np.stack([y_true, y_pred], axis=-1),  # Include y_true and y_pred
-            hovertemplate=(
-                "X: %{x:.2f}<br>"
-                "Y: %{y:.2f}<br>"
-                "Z: %{z:.2f}<br>"
-                "True Label: %{customdata[0]}<br>"  # Display y_true
-                "Predicted Label: %{customdata[1]}"  # Display y_pred
-            ),
-        )
+            if emb_size != 3:
+                embedding = embedding_dimension_reduction[type_data]
 
-        # Add scatter plot to the subplot
-        fig.add_trace(
-            scatter, row=1, col=1
-        )  # Add to the first column (the only subplot)
+            else:
+                embedding = embedding_pretrained[typ][0]
+
+            # y_check = self.y_check_array(y_true_array=y_true, y_pred_array=y_pred)
+
+            # Create a figure with one subplot (only "Label Prediction")
+
+            # Define the scatter plot for Label Prediction
+            scatter = go.Scatter3d(
+                x=embedding[:, 0],
+                y=embedding[:, 1],
+                z=embedding[:, 2],
+                mode="markers",
+                marker=dict(
+                    size=3,
+                    color=colors[i % len(colors)],  # Use y_true for coloring the points
+                    colorscale="Viridis",  # You can change the colorscale here
+                    colorbar=dict(title="Labels"),
+                ),
+                name="Label Prediction",  # Specify the name for the legend (no "trace 0")
+                customdata=np.stack(
+                    [y_true, y_pred], axis=-1
+                ),  # Include y_true and y_pred
+                hovertemplate=(
+                    "X: %{x:.2f}<br>"
+                    "Y: %{y:.2f}<br>"
+                    "Z: %{z:.2f}<br>"
+                    "True Label: %{customdata[0]}<br>"  # Display y_true
+                    "Predicted Label: %{customdata[1]}"  # Display y_pred
+                ),
+            )
+
+            # Add scatter plot to the subplot
+            pos = positions[idx]
+            fig.add_trace(scatter, row=pos[0], col=pos[1])
 
         # Update layout for the figure
         fig.update_layout(
