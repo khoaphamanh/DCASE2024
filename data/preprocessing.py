@@ -245,9 +245,12 @@ class DataPreprocessing:
         if not os.path.exists(self.path_label_unique):
             self.read_raw_data()
 
-        label_unique = pd.read_csv(self.path_label_unique)
+        label_unique = pd.read_csv(self.path_label_unique).to_numpy()
+        label_unique_dict = {}
+        for label_number, label_string in label_unique:
+            label_unique_dict[label_number] = label_string
 
-        return label_unique
+        return label_unique_dict
 
     def timeseries_information(self):
         """
@@ -617,8 +620,8 @@ if __name__ == "__main__":
 
     # data_preprocessing.read_data()
 
-    # label_unique = data_preprocessing.label_unique()
-    # print("label_unique:", label_unique)
+    label_unique = data_preprocessing.label_unique()
+    print("label_unique:", label_unique)
 
     # data_timeseries_information = data_preprocessing.timeseries_information()
     # print("data_timeseries_information:", data_timeseries_information)
