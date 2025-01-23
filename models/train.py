@@ -24,6 +24,7 @@ from scipy.stats import hmean
 from datetime import datetime
 from peft import LoraConfig, get_peft_model
 import optuna
+import random
 
 # add path from data preprocessing in data directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -1172,6 +1173,28 @@ if __name__ == "__main__":
     seed = 1998
     develop_name = "develop"
 
+    # load device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Set seed for PyTorch
+    torch.manual_seed(seed)
+
+    # Set seed for CUDA (if using GPUs)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
+
+        # Ensure deterministic behavior for PyTorch operations
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    # Set seed for Python's random module
+    random.seed(seed)
+
+    # Set seed for NumPy
+    np.random.seed(seed)
+
+    # anomaly detection
     ad = AnomalyDetection(data_name=develop_name, seed=seed)
 
     path_beat_iter3_state_dict = ad.path_beat_iter3_state_dict
@@ -1442,11 +1465,16 @@ if __name__ == "__main__":
         trials_df.to_csv(path_csv_hpo)
 
     else:
-        # project = "DCASE2024/wav-test"
-        # learning_rate = 0.05658312158356384
-        # num_instances = 72960
-        # step_warmup = 116
-        # step_accumulation = 1
+        # learning_rate = 0.0006269427484437461
+        # num_instances = 1218560
+        # step_warmup = 68
+        # loss_type = "adacos"
+        # margin = 4.0
+        # scale = 90.0
+        # lora = True
+        # r = 118
+        # lora_alpha = 74
+        # lora_dropout = 0.1
         # emb_size = 3
 
         ad.anomaly_detection(
