@@ -207,12 +207,7 @@ class AnomalyDetection(DataPreprocessing):
         datetime_string = current_datetime.strftime("%Y_%m_%d-%H_%M_%S")
 
         # create model_name
-        model_name = []
-        for k, v in hyperparameters.items():
-            model_name.append("{}_{}".format(k, v))
-
-        model_name.append(datetime_string)
-        model_name = "-".join(model_name) + ".pth"
+        model_name = "model_{}_embsize_3.pth".format(datetime_string)
 
         return model_name
 
@@ -346,7 +341,7 @@ class AnomalyDetection(DataPreprocessing):
             hyperparameters["lora_dropout"] = lora_dropout
         hyperparameters["batch_size"] = batch_size
         hyperparameters["num_instances"] = num_instances
-        hyperparameters["num_iterations"] = num_instances // batch_size + 1
+        hyperparameters["num_iterations"] = num_instances // batch_size
         hyperparameters["learning_rate"] = learning_rate
         hyperparameters["step_warmup"] = step_warmup
         hyperparameters["step_accumulation"] = step_accumulation
@@ -360,7 +355,7 @@ class AnomalyDetection(DataPreprocessing):
         hyperparameters["loss_type"] = loss_type
         if loss_type == "arcface":
             hyperparameters["margin"] = margin
-            hyperparameters["scaler"] = scale
+            hyperparameters["scale"] = scale
 
         model_name = self.model_name(hyperparameters=hyperparameters)
         hyperparameters["model_name"] = model_name
@@ -392,21 +387,26 @@ class AnomalyDetection(DataPreprocessing):
 
         # save the pretrained mode, loss, optimizer and hyperparameters
         if not HPO:
-            model_pretrained, loss_pretrained, optimizer_pretrained, knn_pretrained = (
-                output_training_loop
-            )
+            (
+                model_pretrained,
+                loss_pretrained,
+                optimizer_pretrained,
+                knn_pretrained,
+                scaler_pretrained,
+            ) = output_training_loop
 
             self.save_pretrained_model_loss(
                 model_pretrained=model_pretrained,
                 loss_pretrained=loss_pretrained,
                 optimizer=optimizer_pretrained,
                 knn_pretrained=knn_pretrained,
+                scaler_pretrained=scaler_pretrained,
                 hyperparameters=hyperparameters,
             )
 
         else:
-            loss_smote_uniform = output_training_loop
-            return loss_smote_uniform
+            accuracy_smote_uniform = output_training_loop
+            return accuracy_smote_uniform
 
     def training_loop(
         self,
@@ -587,7 +587,7 @@ class AnomalyDetection(DataPreprocessing):
                 )
 
                 # only apply knn for anomly detechtion for a good performance
-                if all(acc > 0.2 for acc in accuracy_train_dict.values()):
+                if all(acc > 0.8 for acc in accuracy_train_dict.values()):
                     (
                         accuracy_smote_dict,
                         embedding_smote_array,
@@ -605,16 +605,18 @@ class AnomalyDetection(DataPreprocessing):
                     )
 
                     # only use knn if accuracy smote has good performance
-                    if all(acc > 0.2 for acc in accuracy_smote_dict.values()):
+                    if all(acc > 0.8 for acc in accuracy_smote_dict.values()):
 
                         # use knn to get the decision, anomaly score and knn_pretrained
-                        decision_anomaly_score_test, knn_train = self.decision_knn_1(
-                            k_neighbors=k_neighbors,
-                            embedding_train_array=embedding_smote_array,
-                            embedding_test_array=embedding_test_array,
-                            y_pred_train_array=y_pred_label_smote_array,
-                            y_pred_test_array=y_pred_label_test_array,
-                            y_true_test_array=y_true_test_array,
+                        decision_anomaly_score_test, knn_train, scaler = (
+                            self.decision_knn_1(
+                                k_neighbors=k_neighbors,
+                                embedding_train_array=embedding_smote_array,
+                                embedding_test_array=embedding_test_array,
+                                y_pred_train_array=y_pred_label_smote_array,
+                                y_pred_test_array=y_pred_label_test_array,
+                                y_true_test_array=y_true_test_array,
+                            )
                         )
 
                         # accuracy decision
@@ -640,7 +642,9 @@ class AnomalyDetection(DataPreprocessing):
         if HPO:
             return accuracy_smote_uniform
         else:
-            return model, loss, optimizer, knn_train
+            # knn_train = None
+            # scaler = None
+            return model, loss, optimizer, knn_train, scaler
 
     def evaluation_mode(
         self,
@@ -863,7 +867,7 @@ class AnomalyDetection(DataPreprocessing):
         for i in decision_anomaly_score_test:
             print(i)
 
-        return decision_anomaly_score_test, knn
+        return decision_anomaly_score_test, knn, scaler
 
     def decision_knn(
         self,
@@ -981,7 +985,7 @@ class AnomalyDetection(DataPreprocessing):
         # convert decision anomaly score test to array
         decision_anomaly_score_test = np.array(decision_anomaly_score_test)
 
-        return decision_anomaly_score_test, knn_train
+        return decision_anomaly_score_test, knn_train, scaler_train
 
     def true_test_condition_array(self):
         """
@@ -1139,6 +1143,7 @@ class AnomalyDetection(DataPreprocessing):
         loss_pretrained: nn.Module,
         optimizer: torch.optim.AdamW,
         knn_pretrained: list,
+        scaler_pretrained: StandardScaler,
         hyperparameters: dict,
     ):
         """
@@ -1155,6 +1160,7 @@ class AnomalyDetection(DataPreprocessing):
                 "loss_state_dict": loss_pretrained.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "knn_pretrained": knn_pretrained,
+                "scaler_pretrained": scaler_pretrained,
                 "hyperparameters": hyperparameters,
             },
             path_pretrained_model_loss,
@@ -1338,7 +1344,7 @@ if __name__ == "__main__":
     step_warmup = 120 if not lora else 10
     step_accumulation = 8  # 32
     k_neighbors = 2
-    HPO = True
+    HPO = False
     emb_size = None if not HPO else 3
     margin = None
     scale = None
@@ -1387,8 +1393,8 @@ if __name__ == "__main__":
             )
             margin = trial.suggest_float(name="margin", low=0, high=5, step=0.1)
             scale = trial.suggest_float(name="scale", low=2, high=256, step=2)
-
             lora = trial.suggest_categorical(name="lora", choices=[True, False])
+
             r = trial.suggest_int(name="r", low=8, high=256, step=2)
             lora_alpha = trial.suggest_int(name="lora_alpha", low=2, high=128, step=2)
             lora_dropout = trial.suggest_float(
@@ -1419,7 +1425,7 @@ if __name__ == "__main__":
 
             return accuracy_smote_uniform
 
-        # check if
+        # create or load a exist study
         if not os.path.isfile(path_db_hpo):
             study = optuna.create_study(
                 direction="maximize",
@@ -1431,7 +1437,10 @@ if __name__ == "__main__":
 
         else:
             study = optuna.load_study(
-                study_name=study_name, storage=db_hpo_sqlite, sampler=sampler
+                study_name=study_name,
+                storage=db_hpo_sqlite,
+                sampler=sampler,
+                pruner=pruner,
             )
 
         # run trial if not enough n_trials_total
@@ -1465,17 +1474,30 @@ if __name__ == "__main__":
         trials_df.to_csv(path_csv_hpo)
 
     else:
-        # learning_rate = 0.0006269427484437461
-        # num_instances = 1218560
-        # step_warmup = 68
-        # loss_type = "adacos"
-        # margin = 4.0
-        # scale = 90.0
-        # lora = True
+        # learning_rate = 0.01  # 0.0006269427484437461
+        # batch_size = 8
+        # step_accumulation = 32
+        # num_instances = 288512  #  batch_size * 10  # 12185860
+        # step_warmup = 2208
+        # loss_type = "arcface"  # "adacos"
+        # margin = 5
+        # scale = 172
+        # lora = False
         # r = 118
         # lora_alpha = 74
         # lora_dropout = 0.1
-        # emb_size = 3
+
+        learning_rate = 0.010802634342004727
+        num_instances = batch_size * 272
+        step_warmup = 138
+        loss_type = "arcface"
+        margin = 5.0
+        scale = 172.0
+        lora = False
+        r = 40
+        lora_alpha = 40
+        lora_dropout = 0.4
+        emb_size = 3
 
         ad.anomaly_detection(
             project=project,
