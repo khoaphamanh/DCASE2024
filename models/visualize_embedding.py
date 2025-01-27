@@ -10,6 +10,8 @@ from sklearn.manifold import TSNE
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import plotly.express as px
+from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import StandardScaler
 
 
 # class Visualize Embedding for emb_size = 3
@@ -30,12 +32,26 @@ class VisualizeEmbedding(AnomalyDetection):
         # extract the state dict of each model from dictionary keys
         model_state_dict = loaded_dict["model_state_dict"]
         loss_state_dict = loaded_dict["loss_state_dict"]
-        knn_pretrained = loaded_dict["knn_pretrained"]
+        knn = loaded_dict["knn_pretrained"]
+        scaler = loaded_dict["scaler_pretrained"]
         hyperparameters = loaded_dict["hyperparameters"]
 
         # load model neural network
         emb_size = hyperparameters["emb_size"]
-        model = self.load_model(emb_size=emb_size)
+        lora = hyperparameters["lora"]
+        if lora:
+            r = hyperparameters["r"]
+            lora_alpha = hyperparameters["lora_alpha"]
+            lora_dropout = hyperparameters["lora_dropout"]
+            model = self.load_model(
+                emb_size=emb_size,
+                r=r,
+                lora=lora,
+                lora_alpha=lora_alpha,
+                lora_dropout=lora_dropout,
+            )
+        else:
+            model = self.load_model(emb_size=emb_size)
         model.load_state_dict(model_state_dict)
         model = model.to(self.device)
 
@@ -57,7 +73,7 @@ class VisualizeEmbedding(AnomalyDetection):
         loss.load_state_dict(loss_state_dict)
         loss = loss.to(self.device)
 
-        return model, loss, knn_pretrained, hyperparameters
+        return model, loss, knn, scaler, hyperparameters
 
     def get_pretrained_embedding(self, pretrained_file: str):
         """
@@ -72,9 +88,13 @@ class VisualizeEmbedding(AnomalyDetection):
         if not os.path.exists(path_pretrained_embedding):
 
             # load pretrained model
-            model, loss, knn, hyperparameters = self.load_pretrained_model(
-                pretrained_file=pretrained_file
-            )
+            (
+                model,
+                loss,
+                knn,
+                scaler,
+                hyperparameters,
+            ) = self.load_pretrained_model(pretrained_file=pretrained_file)
 
             # load dataset as TensorDataset
             k_smote = hyperparameters["k_smote"]
@@ -153,6 +173,9 @@ class VisualizeEmbedding(AnomalyDetection):
         model: BEATsCustom,
         loss: AdaCosLoss,
         hyperparameters: dict,
+        knn=None,
+        scaler=None,
+        anomaly_detection=False,
     ):
         """
         get the label prediction given dataset, model, loss
@@ -281,8 +304,6 @@ class VisualizeEmbedding(AnomalyDetection):
         self,
         pretrained_file: str,
         method: str = None,
-        type_data: str = None,
-        type_label: str = None,
     ):
         """Visualize 3D embeddings for multiple datasets."""
         # Type data to plot
@@ -443,15 +464,18 @@ if __name__ == "__main__":
     # print("seed:", seed)
 
     pretrained_file = "k_smote_5-batch_size_32-num_instances_320000-num_iterations_1250-learning_rate_0.0001-step_warmup_120-step_accumulation_8-k_neighbors_2-emb_size_992-loss_type_adacos-2024_12_19-11_01_41.pth"
-    embedding_dimension_reduction_umap = visualize_embedding.dimension_reduction(
-        pretrained_file=pretrained_file, method="umap"
-    )
+    pretrained_file = "k_smote_5-lora_False-batch_size_32-num_instances_320000-num_iterations_10001-learning_rate_0.0001-step_warmup_120-step_accumulation_8-k_neighbors_2-emb_size_992-HPO_False-loss_type_adacos-2025_01_22-18_17_43.pth"
+    pretrained_file = "model_embsize_3.pth"
+    pretrained_file = "model_2025_01_26-14_27_11_embsize_3.pth"
+    # embedding_dimension_reduction_umap = visualize_embedding.dimension_reduction(
+    #     pretrained_file=pretrained_file, method="umap"
+    # )
 
-    print(embedding_dimension_reduction_umap.keys())
-    for i in embedding_dimension_reduction_umap:
+    # print(embedding_dimension_reduction_umap.keys())
+    # for i in embedding_dimension_reduction_umap:
 
-        check = embedding_dimension_reduction_umap[i]
-        print("check shape:", check.shape)
+    #     check = embedding_dimension_reduction_umap[i]
+    #     print("check shape:", check.shape)
 
     # embedding_dimension_reduction_tsne = visualize_embedding.dimension_reduction(
     #     pretrained_file=pretrained_file, method="tsne"
@@ -459,11 +483,7 @@ if __name__ == "__main__":
 
     # print(embedding_dimension_reduction_tsne.keys())
 
-    fig = visualize_embedding.visualize(
-        pretrained_file=pretrained_file,
-        method="umap",
-        type_data="smote",
-    )
+    fig = visualize_embedding.visualize(pretrained_file=pretrained_file)
 
     end = default_timer()
     print(end - start)
