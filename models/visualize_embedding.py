@@ -416,36 +416,6 @@ class VisualizeEmbedding(AnomalyDetection):
         # Show the figure
         fig.show()
 
-    def plot_3d_embedding_label_prediction(self):
-        """
-        plot the 3D label prediction from embedding
-        """
-
-    def plot_gray_sphere(self, ax):
-        """
-        plot the gray sphere with radius 1
-        """
-        # Define the grid for spherical coordinates
-        u = np.linspace(0, 2 * np.pi, 100)  # Longitude
-        v = np.linspace(0, np.pi, 100)  # Latitude
-
-        # Parametric equations for a sphere
-        x = np.sin(v)[:, None] * np.cos(u)  # X = sin(latitude) * cos(longitude)
-        y = np.sin(v)[:, None] * np.sin(u)  # Y = sin(latitude) * sin(longitude)
-        z = np.cos(v)[:, None]  # Z = cos(latitude)
-
-        # Plot the surface of the sphere
-        ax.plot_surface(x, y, z, color="gray", alpha=0.1)
-
-    def y_check_array(self, y_true_array: np.array, y_pred_array: np.array):
-        """
-        get the check between y_true and y_pred with 1 is correct prediction and 0 is false prediction
-        """
-        # check the prediction with 1 correct prediction and 0 false prediction
-        y_check = np.equal(y_true_array, y_pred_array)
-        y_check = y_check.astype(int)
-        return y_check
-
 
 # run this script
 if __name__ == "__main__":
@@ -463,10 +433,9 @@ if __name__ == "__main__":
     # seed = visualize_embedding.seed
     # print("seed:", seed)
 
-    pretrained_file = "k_smote_5-batch_size_32-num_instances_320000-num_iterations_1250-learning_rate_0.0001-step_warmup_120-step_accumulation_8-k_neighbors_2-emb_size_992-loss_type_adacos-2024_12_19-11_01_41.pth"
-    pretrained_file = "k_smote_5-lora_False-batch_size_32-num_instances_320000-num_iterations_10001-learning_rate_0.0001-step_warmup_120-step_accumulation_8-k_neighbors_2-emb_size_992-HPO_False-loss_type_adacos-2025_01_22-18_17_43.pth"
-    pretrained_file = "model_embsize_3.pth"
     pretrained_file = "model_2025_01_26-14_27_11_embsize_3.pth"
+    pretrained_file = "model_2025_01_27-20_55_51_embsize_3.pth"
+
     # embedding_dimension_reduction_umap = visualize_embedding.dimension_reduction(
     #     pretrained_file=pretrained_file, method="umap"
     # )
