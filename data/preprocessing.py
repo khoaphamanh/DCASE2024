@@ -240,7 +240,7 @@ class DataPreprocessing:
 
     def label_unique(self):
         """
-        load label unique as csv, label number and their name
+        load label unique as dict, label number and their name
         """
         if not os.path.exists(self.path_label_unique):
             self.read_raw_data()
@@ -549,11 +549,34 @@ class DataPreprocessing:
 
         return train_data_smote, train_label_smote
 
-    def id_in_decision_but_not_in_attribute(self):
+    def label_machine(self, list_machines=None):
         """
-        find the id that in decision but not in attribute
+        return the labels of machine(s) as dict if list_machine is None else a list of the labels for all machine in list_machine
         """
-        pass
+        dict_label_machine = {}
+        for m in self.machines:
+            dict_label_machine[m] = []
+            for label_number, label_string in self.label_unique().items():
+                if m in label_string:
+                    dict_label_machine[m].append(label_number)
+
+        # return dict if list machine
+        if list_machines is None:
+            return dict_label_machine
+
+        # return list of the labels correspond for
+        else:
+            label_machine_list = [
+                l
+                for m_dict, l in dict_label_machine.items()
+                for m_list in list_machines
+                if m_dict == m_list
+            ]
+            label_machine_list = [
+                ele for ele_list in label_machine_list for ele in ele_list
+            ]
+
+            return label_machine_list
 
     def log_melspectrogram(
         self,
@@ -653,8 +676,8 @@ if __name__ == "__main__":
     # print("test_data:", test_data.shape)
     # print("test_label:", test_label.shape)
 
-    num_classes_attribute = data_preprocessing.num_classes_attribute()
-    print("num_classes_attribute:", num_classes_attribute)
+    # num_classes_attribute = data_preprocessing.num_classes_attribute()
+    # print("num_classes_attribute:", num_classes_attribute)
 
     # train_data_smote, train_label_smote = data_preprocessing.smote()
     # print("train_data_smote shape:", train_data_smote.shape)
@@ -703,6 +726,11 @@ if __name__ == "__main__":
     # out = data_preprocessing.id_timeseries_analysis(keys=check)
     # print("out len:", len(out))
     # print("out:", out)
+
+    label_machine = data_preprocessing.label_machine(
+        list_machines=data_preprocessing.machines
+    )
+    print("label_machine:", label_machine)
 
     end = default_timer()
     print(end - start)
