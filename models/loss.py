@@ -11,6 +11,10 @@ class ArcFaceLoss(nn.Module):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_classes = num_classes
         self.emb_size = emb_size
+        if margin == None:
+            margin = 0.5
+        if scale == None:
+            scale = 64
         self.margin = margin
         self.scale = scale
         self.w = nn.Parameter(
@@ -205,7 +209,7 @@ class AdaCosLoss(nn.Module):
                 # update scale
                 new_scale = torch.log(B_avg) / torch.cos(
                     torch.min(
-                        torch.pi / 4 * torch.ones_like(angle_median),
+                        torch.pi / 1000000000000 * torch.ones_like(angle_median),
                         angle_median,
                     )
                 )
