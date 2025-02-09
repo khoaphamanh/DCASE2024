@@ -222,6 +222,58 @@ class AnomalyDetection(DataPreprocessing):
 
         return model_name
 
+    def load_loss(
+        self,
+        loss_type: str,
+        num_classes: int,
+        emb_size: int = None,
+        margin: int = None,
+        scale: int = None,
+    ):
+        # load loss based on loss type
+        if loss_type == "adacos":
+            loss = AdaCosLoss(num_classes=num_classes, emb_size=emb_size)
+        elif loss_type == "arcface":
+            if margin == None:
+                margin = 0.5
+            if scale == None:
+                scale = 64
+            loss = ArcFaceLoss(
+                num_classes=num_classes,
+                emb_size=emb_size,
+                margin=margin,
+                scale=scale,
+            )
+
+        return loss
+
+    def load_scheduler(
+        self, optimizer, scheduler_type: str, step_warmup: int, min_lr: float = None
+    ):
+        """
+        load scheduler for learning rate
+        """
+        if scheduler_type == "cosine_restarts" and min_lr is not None:
+            scheduler = CosineAnnealingWarmRestarts(
+                optimizer, T_0=step_warmup, eta_min=min_lr
+            )
+        elif scheduler_type == "linear_restarts":
+
+            def lr_lambda(step):
+                """
+                function to reset learning rate after warmup_steps, lr increase from very small (step 1) to max_lr (warmup_step).
+                lr very small (warmup_step + 1) to lr_max (warmup_step*2)
+                default step is 1
+                """
+                if step % step_warmup == 0:
+                    return 1
+                else:
+                    return (step % step_warmup) / step_warmup
+
+            scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+        return scheduler
+
     def hyperparameters_configuration_dict(self, **kwargs):
         """
         hyperparameter dictionary
@@ -271,6 +323,8 @@ class AnomalyDetection(DataPreprocessing):
         step_warmup,
         step_accumulation,
         k_neighbors,
+        scheduler_type,
+        min_lr=None,
         margin=None,
         scale=None,
         emb_size=None,
@@ -331,44 +385,26 @@ class AnomalyDetection(DataPreprocessing):
         # loss
         if emb_size == None:
             emb_size = model.embedding_asp
-        if loss_type == "adacos":
-            loss = AdaCosLoss(
-                num_classes=self.num_classes_attribute(), emb_size=emb_size
-            )
-        elif loss_type == "arcface":
-            if margin == None:
-                margin = 0.5
-            if scale == None:
-                scale = 64
-            loss = ArcFaceLoss(
-                num_classes=self.num_classes_attribute(),
-                emb_size=emb_size,
-                margin=margin,
-                scale=scale,
-            )
+        num_classes = self.num_classes_attribute()
+        loss = self.load_loss(
+            loss_type=loss_type,
+            num_classes=num_classes,
+            emb_size=emb_size,
+            margin=margin,
+            scale=scale,
+        )
 
         # optimizer
         parameters = list(model.parameters()) + list(loss.parameters())
         optimizer = torch.optim.AdamW(parameters, lr=learning_rate)
 
         # scheduler
-        def lr_lambda(step):
-            """
-            function to reset learning rate after warmup_steps, lr increase from very small (step 1) to max_lr (warmup_step).
-            lr very small (warmup_step + 1) to lr_max (warmup_step*2)
-            default step is 1
-            """
-            if step % step_warmup == 0:
-                return 1
-            else:
-                return (step % step_warmup) / step_warmup
-
-        if lora:
-            scheduler = CosineAnnealingWarmRestarts(
-                optimizer, T_0=step_warmup, eta_min=1e-5
-            )
-        else:
-            scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
+        scheduler = self.load_scheduler(
+            optimizer=optimizer,
+            scheduler_type=scheduler_type,
+            step_warmup=step_warmup,
+            min_lr=min_lr,
+        )
 
         # save the hyperparameters and configuration
         model_name = self.model_name()
@@ -1521,6 +1557,8 @@ if __name__ == "__main__":
         margin = 5
         scale = 172
         lora = False
+        scheduler_type = "cosine_restarts"
+        min_lr = 1e-5
         r = 118
         lora_alpha = 74
         lora_dropout = 0.1
@@ -1552,6 +1590,8 @@ if __name__ == "__main__":
             step_warmup=step_warmup,
             step_accumulation=step_accumulation,
             k_neighbors=k_neighbors,
+            scheduler_type=scheduler_type,
+            min_lr=min_lr,
             margin=margin,
             scale=scale,
             emb_size=emb_size,
