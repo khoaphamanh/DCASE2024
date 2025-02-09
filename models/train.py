@@ -124,7 +124,7 @@ class AnomalyDetection(DataPreprocessing):
 
         return model
 
-    def load_dataset_tensor(self, k_smote=5):
+    def load_dataset_tensor(self, k_smote=5, kind=None):
         """
         load data smote and train, test data as Tensor
         """
@@ -160,7 +160,15 @@ class AnomalyDetection(DataPreprocessing):
             test_dataset_attribute, test_label_attribute
         )
 
-        return dataset_smote, train_dataset_attribute, test_dataset_attribute
+        # return data based on kind
+        if kind == "train":
+            return train_dataset_attribute
+        elif kind == "test":
+            return test_dataset_attribute
+        elif kind == "smote":
+            return dataset_smote
+        else:
+            return dataset_smote, train_dataset_attribute, test_dataset_attribute
 
     def data_loader(
         self, dataset, batch_size, num_instances=None, uniform_sampling=False
@@ -196,7 +204,7 @@ class AnomalyDetection(DataPreprocessing):
 
         return dataloader
 
-    def model_name(self, hyperparameters: dict):
+    def model_name(self):
         """
         get the model name to save it
         """
@@ -236,11 +244,11 @@ class AnomalyDetection(DataPreprocessing):
         """
         main function to find the result
         """
-        # fix hyperparameter to suit with vram
-        if self.vram < 23:
-            step_warmup = step_warmup * 4
-            batch_size = 8
-            step_accumulation = step_accumulation * 4
+        # # fix hyperparameter to suit with vram
+        # if self.vram < 23:
+        #     step_warmup = step_warmup * 4
+        #     batch_size = 8
+        #     step_accumulation = step_accumulation * 4
 
         # init neptune
         run = neptune.init_run(project=project, api_token=api_token)
@@ -357,7 +365,7 @@ class AnomalyDetection(DataPreprocessing):
             hyperparameters["margin"] = margin
             hyperparameters["scale"] = scale
 
-        model_name = self.model_name(hyperparameters=hyperparameters)
+        model_name = self.model_name()
         hyperparameters["model_name"] = model_name
         run["hyperparameters"] = hyperparameters
 
@@ -435,7 +443,7 @@ class AnomalyDetection(DataPreprocessing):
             trial = hyperparameters["trial"]
 
         # step report and evaluation
-        step_eval = step_accumulation * 50
+        step_eval = 50
         step_lr = 0
 
         # loss train
@@ -541,7 +549,11 @@ class AnomalyDetection(DataPreprocessing):
             # scheduler.step()
 
             # report the loss and evaluation mode every 1000 iteration
-            if (iter_smote_uniform + 1) % step_eval == 0 and not HPO:
+            if (
+                (iter_smote_uniform + 1) % step_eval == 0
+                and iter_smote_uniform > 100
+                and not HPO
+            ):
                 # type_labels
                 type_labels_train = ["train_source_normal", "train_target_normal"]
                 type_labels_test = [
@@ -1474,30 +1486,30 @@ if __name__ == "__main__":
         trials_df.to_csv(path_csv_hpo)
 
     else:
-        # learning_rate = 0.01  # 0.0006269427484437461
-        # batch_size = 8
-        # step_accumulation = 32
-        # num_instances = 288512  #  batch_size * 10  # 12185860
-        # step_warmup = 2208
-        # loss_type = "arcface"  # "adacos"
-        # margin = 5
-        # scale = 172
-        # lora = False
-        # r = 118
-        # lora_alpha = 74
-        # lora_dropout = 0.1
-
-        learning_rate = 0.010802634342004727
-        num_instances = batch_size * 272
-        step_warmup = 138
-        loss_type = "arcface"
-        margin = 5.0
-        scale = 172.0
+        learning_rate = 0.01  # 0.0006269427484437461
+        batch_size = 12
+        step_accumulation = 32
+        num_instances = 288512  #  batch_size * 10  # 12185860
+        step_warmup = 2208
+        loss_type = "arcface"  # "adacos"
+        margin = 5
+        scale = 172
         lora = False
-        r = 40
-        lora_alpha = 40
-        lora_dropout = 0.4
-        emb_size = 3
+        r = 118
+        lora_alpha = 74
+        lora_dropout = 0.1
+
+        # learning_rate = 0.08119529850299605
+        # num_instances = 32 * 272
+        # step_warmup = 156
+        # loss_type = "arcface"
+        # margin = 4.7
+        # scale = 218.0
+        # lora = False
+        # r = 8
+        # lora_alpha = 14
+        # lora_dropout = 0.3
+        # emb_size = 3
 
         ad.anomaly_detection(
             project=project,
