@@ -171,13 +171,16 @@ class AnomalyDetection(DataPreprocessing):
             return dataset_smote, train_dataset_attribute, test_dataset_attribute
 
     def data_loader(
-        self, dataset, batch_size, num_instances=None, uniform_sampling=False
+        self, dataset, batch_size, num_instances_factor=None, uniform_sampling=False
     ):
         """
         convert tensor data to dataloader
         """
         # check if uniform_sampling
-        if uniform_sampling and isinstance(num_instances, int):
+        if uniform_sampling and isinstance(num_instances_factor, int):
+            # total number of instances
+            num_instances = num_instances_factor * batch_size
+
             # split to get the label
             _, y_train_smote = dataset.tensors
 
@@ -219,6 +222,39 @@ class AnomalyDetection(DataPreprocessing):
 
         return model_name
 
+    def hyperparameters_configuration_dict(self, **kwargs):
+        """
+        hyperparameter dictionary
+        """
+
+        # pop function for a given dict
+        def dict_pop(dictionary: dict, *arg):
+            """
+            function to pop the
+            """
+            for i in arg:
+                dictionary.pop(i, None)
+            return dictionary
+
+        # pop some keys for hyperparameters dictionary
+        if set({"lora", "HPO", "loss_type"}).issubset(set(kwargs.keys())):
+            # lora
+            lora = kwargs["lora"]
+            if not lora:
+                dict_pop(kwargs, "r", "lora_alpha", "lora_dropout")
+
+            # HPO
+            HPO = kwargs["HPO"]
+            if not HPO:
+                dict_pop(kwargs, "trial")
+
+            # arcface
+            loss_type = kwargs["loss_type"]
+            if loss_type != "arcface":
+                dict_pop(kwargs, "margin", "scale")
+
+        return kwargs
+
     def anomaly_detection(
         self,
         project,
@@ -229,7 +265,7 @@ class AnomalyDetection(DataPreprocessing):
         lora_alpha,
         lora_dropout,
         batch_size,
-        num_instances,
+        num_instances_factor,
         loss_type,
         learning_rate,
         step_warmup,
@@ -244,12 +280,6 @@ class AnomalyDetection(DataPreprocessing):
         """
         main function to find the result
         """
-        # # fix hyperparameter to suit with vram
-        # if self.vram < 23:
-        #     step_warmup = step_warmup * 4
-        #     batch_size = 8
-        #     step_accumulation = step_accumulation * 4
-
         # init neptune
         run = neptune.init_run(project=project, api_token=api_token)
 
@@ -261,10 +291,11 @@ class AnomalyDetection(DataPreprocessing):
         ) = self.load_dataset_tensor(k_smote=k_smote)
 
         # dataloader
+        num_instances = batch_size * num_instances_factor
         dataloader_smote_uniform = self.data_loader(
             dataset=dataset_smote,
             batch_size=batch_size,
-            num_instances=num_instances,
+            num_instances_factor=num_instances_factor,
             uniform_sampling=True,
         )
         dataloader_smote_attribute = self.data_loader(
@@ -340,43 +371,38 @@ class AnomalyDetection(DataPreprocessing):
             scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
 
         # save the hyperparameters and configuration
-        hyperparameters = {}
-        hyperparameters["k_smote"] = k_smote
-        hyperparameters["lora"] = lora
-        if lora:
-            hyperparameters["r"] = r
-            hyperparameters["lora_alpha"] = lora_alpha
-            hyperparameters["lora_dropout"] = lora_dropout
-        hyperparameters["batch_size"] = batch_size
-        hyperparameters["num_instances"] = num_instances
-        hyperparameters["num_iterations"] = num_instances // batch_size
-        hyperparameters["learning_rate"] = learning_rate
-        hyperparameters["step_warmup"] = step_warmup
-        hyperparameters["step_accumulation"] = step_accumulation
-        hyperparameters["k_neighbors"] = k_neighbors
-        hyperparameters["emb_size"] = emb_size
-
-        hyperparameters["HPO"] = HPO
-        if HPO:
-            hyperparameters["trial"] = trial
-
-        hyperparameters["loss_type"] = loss_type
-        if loss_type == "arcface":
-            hyperparameters["margin"] = margin
-            hyperparameters["scale"] = scale
-
         model_name = self.model_name()
-        hyperparameters["model_name"] = model_name
+        hyperparameters = self.hyperparameters_configuration_dict(
+            k_smote=k_smote,
+            lora=lora,
+            r=r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            batch_size=batch_size,
+            num_instances_factor=num_instances_factor,
+            num_instances=num_instances,
+            loss_type=loss_type,
+            learning_rate=learning_rate,
+            step_warmup=step_warmup,
+            step_accumulation=step_accumulation,
+            k_neighbors=k_neighbors,
+            HPO=HPO,
+            emb_size=emb_size,
+            margin=margin,
+            scale=scale,
+            trial=trial,
+            model_name=model_name,
+        )
         run["hyperparameters"] = hyperparameters
 
-        configuration = {}
-        configuration["seed"] = self.seed
-        configuration["num_params"] = num_params
-        configuration["num_params_trainable"] = num_params_trainable
-        configuration["n_gpus"] = self.n_gpus
-        configuration["device"] = stringify_unsupported(self.device)
-        configuration["gpu_name"] = self.gpu_name
-        configuration["vram"] = self.vram
+        configuration = self.hyperparameters_configuration_dict(
+            seed=self.seed,
+            num_params=num_params,
+            num_params_trainable=num_params_trainable,
+            n_gpus=self.n_gpus,
+            device=stringify_unsupported(self.device),
+            vram=self.vram,
+        )
         run["configuration"] = configuration
 
         # training attribute classification
@@ -1350,7 +1376,7 @@ if __name__ == "__main__":
     lora_alpha = 16
     lora_dropout = 0.1
     batch_size = 32  # 8
-    num_instances = 320000 if not lora else 320000 * 5
+    num_instances_factor = 320000 if not lora else 320000 * 5
     loss_type = "adacos"  # "arcface"
     learning_rate = 0.0001 if not lora else 1e-3
     step_warmup = 120 if not lora else 10
@@ -1390,8 +1416,8 @@ if __name__ == "__main__":
             learning_rate = trial.suggest_float(
                 name="learning_rate", low=1e-6, high=1e-1, log=True
             )
-            num_instances = trial.suggest_int(
-                name="num_instances",
+            num_instances_factor = trial.suggest_int(
+                name="num_instances_factor",
                 low=batch_size * 10,
                 high=batch_size * 50000,
                 step=batch_size * 10,
@@ -1422,7 +1448,7 @@ if __name__ == "__main__":
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
                 batch_size=batch_size,
-                num_instances=num_instances,
+                num_instances_factor=num_instances_factor,
                 loss_type=loss_type,
                 learning_rate=learning_rate,
                 step_warmup=step_warmup,
@@ -1489,7 +1515,7 @@ if __name__ == "__main__":
         learning_rate = 0.01  # 0.0006269427484437461
         batch_size = 12
         step_accumulation = 32
-        num_instances = 288512  #  batch_size * 10  # 12185860
+        num_instances_factor = 100
         step_warmup = 2208
         loss_type = "arcface"  # "adacos"
         margin = 5
@@ -1520,7 +1546,7 @@ if __name__ == "__main__":
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             batch_size=batch_size,
-            num_instances=num_instances,
+            num_instances_factor=num_instances_factor,
             loss_type=loss_type,
             learning_rate=learning_rate,
             step_warmup=step_warmup,
