@@ -490,6 +490,7 @@ class AnomalyDetection(ModelDataPrepraration):
 
         embedding_array = np.empty(shape=(len_dataset, emb_size))
 
+        # evaluation mode
         with torch.no_grad():
             for iter_eval, (X, y) in enumerate(dataloader_attribute):
 
@@ -580,10 +581,8 @@ class AnomalyDetection(ModelDataPrepraration):
         k_neighbors: int = 2,
         HPO: bool = False,
         trial: optuna.trial.Trial = None,
-        index_split=None,
         num_train_machines: int = 5,
         num_splits: int = 5,
-        list_machines=None,
     ):
 
         # get the combinations of machines (list of the machines)
@@ -593,35 +592,40 @@ class AnomalyDetection(ModelDataPrepraration):
 
         # cross validation
         hmean_list_hpo = []
-        for idx_split, list_machines in enumerate(list_machines_combination):
+        for index_split, list_machines in enumerate(list_machines_combination):
 
+            # calculate the hmean split
             hmean_split = self.anomaly_detection(
                 project=project,
                 api_token=api_token,
                 k_smote=k_smote,
-                batch_size= batch_size,
-                num_iterations= num_iterations,
-                lora: bool = False,
-                r: int = 8,
-                lora_alpha: int = 8,
-                lora_dropout: float = 0.0,
-                emb_size: int = None,
-                loss_type: str = "adacos",
-                margin: int = None,
-                scale: int = None,
-                learning_rate: float = 1e-5,
-                scheduler_type: str = "linear_restarts",
-                step_warmup: int = 8,
-                min_lr: float = None,
-                step_accumulation: int = 8,
-                k_neighbors: int = 2,
-                HPO: bool = False,
-                trial: optuna.trial.Trial = None,
-                index_split=None,
-                num_train_machines: int = 5,
-                num_splits: int = 5,
-                list_machines=None,
+                batch_size=batch_size,
+                num_iterations=num_iterations,
+                lora=lora,
+                r=r,
+                lora_alpha=lora_alpha,
+                lora_dropout=lora_dropout,
+                emb_size=emb_size,
+                loss_type=loss_type,
+                margin=margin,
+                scale=scale,
+                learning_rate=learning_rate,
+                scheduler_type=scheduler_type,
+                step_warmup=step_warmup,
+                min_lr=min_lr,
+                step_accumulation=step_accumulation,
+                k_neighbors=k_neighbors,
+                HPO=HPO,
+                trial=trial,
+                index_split=index_split,
+                num_train_machines=num_train_machines,
+                num_splits=num_splits,
+                list_machines=list_machines,
             )
+            hmean_list_hpo.append(hmean_split)
+        print("hmean_list_hpo:", hmean_list_hpo)
+
+        return np.mean(hmean_list_hpo)
 
     def accuracy_attribute(
         self,
@@ -1043,18 +1047,20 @@ if __name__ == "__main__":
     r = 64
     lora_alpha = 16
     lora_dropout = 0.1
-    batch_size = 32  # 8
-    num_instances_factor = 320000 if not lora else 320000 * 5
-    loss_type = "adacos"  # "arcface"
+    batch_size = 32
+    loss_type = "adacos"
     learning_rate = 0.0001 if not lora else 1e-3
     step_warmup = 120 if not lora else 10
-    step_accumulation = 8  # 32
+    step_accumulation = 8
     k_neighbors = 2
-    HPO = True
-    emb_size = None if not HPO else 3
+    num_train_machines = 5
+    num_splits = 5
+    min_lr = 1e-6
+    emb_size = None
     margin = None
     scale = None
     trial = None
+    HPO = True
 
     # hyperparameters optimization
     if HPO:
@@ -1096,6 +1102,9 @@ if __name__ == "__main__":
             loss_type = trial.suggest_categorical(
                 name="loss_type", choices=["adacos", "arcface"]
             )
+            scheduler_type = trial.suggest_categorical(
+                name="scheduler_type", choices=["cosine_restarts", "linear_restarts"]
+            )
             margin = trial.suggest_float(name="margin", low=0, high=5, step=0.1)
             scale = trial.suggest_float(name="scale", low=2, high=256, step=2)
             lora = trial.suggest_categorical(name="lora", choices=[True, False])
@@ -1106,29 +1115,34 @@ if __name__ == "__main__":
                 name="lora_dropout", low=0.1, high=1, step=0.1
             )
 
-            accuracy_smote_uniform = ad.anomaly_detection(
+            # mean for cv
+            hmean_cv = ad.cross_validation(
                 project=project,
                 api_token=api_token,
                 k_smote=k_smote,
+                batch_size=batch_size,
+                num_iterations=num_iterations,
                 lora=lora,
                 r=r,
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
-                batch_size=batch_size,
-                num_iterations=num_iterations,
+                emb_size=emb_size,
                 loss_type=loss_type,
-                learning_rate=learning_rate,
-                step_warmup=step_warmup,
-                step_accumulation=step_accumulation,
-                k_neighbors=k_neighbors,
                 margin=margin,
                 scale=scale,
-                emb_size=emb_size,
+                learning_rate=learning_rate,
+                scheduler_type=scheduler_type,
+                step_warmup=step_warmup,
+                min_lr=min_lr,
+                step_accumulation=step_accumulation,
+                k_neighbors=k_neighbors,
                 HPO=HPO,
                 trial=trial,
+                num_train_machines=num_train_machines,
+                num_splits=num_splits,
             )
 
-            return accuracy_smote_uniform
+            return hmean_cv
 
         # create or load a exist study
         study = optuna.create_study(
@@ -1171,7 +1185,7 @@ if __name__ == "__main__":
         trials_df.to_csv(path_csv_hpo)
 
     else:
-        learning_rate = 0.01  # 0.0006269427484437461
+        learning_rate = 0.01
         batch_size = 12
         step_accumulation = 32
         num_instances_factor = 100
