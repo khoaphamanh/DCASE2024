@@ -6,10 +6,7 @@ import sys
 import os
 import numpy as np
 from loss import AdaCosLoss, ArcFaceLoss
-from sklearn.metrics import confusion_matrix, accuracy_score
-from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import roc_auc_score, roc_curve
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 import neptune
 from neptune.utils import stringify_unsupported
@@ -17,9 +14,6 @@ from torch.optim.lr_scheduler import (
     LambdaLR,
     CosineAnnealingWarmRestarts,
 )
-import seaborn as sns
-import matplotlib.pyplot as plt
-from scipy.stats import hmean
 from datetime import datetime
 from peft import LoraConfig, get_peft_model
 import optuna
@@ -188,15 +182,15 @@ class ModelDataPrepraration(DataPreprocessing):
             return dataset_smote, train_dataset_attribute, test_dataset_attribute
 
     def data_loader(
-        self, dataset, batch_size, num_instances_factor=None, uniform_sampling=False
+        self, dataset, batch_size, num_iterations=None, uniform_sampling=False
     ):
         """
         convert tensor data to dataloader
         """
         # check if uniform_sampling
-        if uniform_sampling and isinstance(num_instances_factor, int):
+        if uniform_sampling and isinstance(num_iterations, int):
             # total number of instances
-            num_instances = num_instances_factor * batch_size
+            num_instances = num_iterations * batch_size
 
             # split to get the label
             _, y_train_smote = dataset.tensors
@@ -461,7 +455,7 @@ class ModelDataPrepraration(DataPreprocessing):
             dataloader_smote_uniform = self.data_loader(
                 dataset=dataset_smote,
                 batch_size=batch_size,
-                num_instances_factor=num_instances_factor,
+                num_iterations=num_instances_factor,
                 uniform_sampling=True,
             )
             dataloader_smote_attritbute = self.data_loader(
