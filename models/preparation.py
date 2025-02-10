@@ -15,7 +15,6 @@ import neptune
 from neptune.utils import stringify_unsupported
 from torch.optim.lr_scheduler import (
     LambdaLR,
-    CosineAnnealingLR,
     CosineAnnealingWarmRestarts,
 )
 import seaborn as sns
@@ -26,7 +25,12 @@ from peft import LoraConfig, get_peft_model
 import optuna
 import random
 import itertools
-from ..data.preprocessing import DataPreprocessing
+
+# from ..data.preprocessing import DataPreprocessing
+
+# add path from data preprocessing in data directory
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from data.preprocessing import DataPreprocessing
 
 
 class ModelDataPrepraration(DataPreprocessing):
@@ -84,10 +88,10 @@ class ModelDataPrepraration(DataPreprocessing):
             torch.backends.cudnn.benchmark = False
 
         # Set seed for Python's random module
-        random.seed(seed)
+        random.seed(self.seed)
 
         # Set seed for NumPy
-        np.random.seed(seed)
+        np.random.seed(self.seed)
 
     def load_model(
         self,
@@ -540,7 +544,6 @@ class ModelDataPrepraration(DataPreprocessing):
                 trial=trial,
                 model_name=name_saved_model,
                 input_size=input_size,
-                trial=trial,
                 trial_number=trial.number,
                 index_split=idx_split,
             )
