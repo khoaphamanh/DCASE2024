@@ -195,15 +195,15 @@ class ModelDataPrepraration(DataPreprocessing):
             # split to get the label
             _, y_train_smote = dataset.tensors
 
+            # instance weight = weight only for smote dataset (same number of labels)
             class_instances_count = torch.tensor(
                 [(y_train_smote == l).sum() for l in torch.unique(y_train_smote)]
             )
             weight = 1.0 / class_instances_count
-            instance_weight = torch.tensor([weight[l] for l in y_train_smote])
 
             # batch uniform sampling
             sampler = WeightedRandomSampler(
-                weights=instance_weight,
+                weights=weight,
                 num_samples=num_instances,
             )
 
@@ -397,162 +397,6 @@ class ModelDataPrepraration(DataPreprocessing):
             "pretrained model, loss, optimizer and hyperparameters saved to ",
             path_pretrained_model_loss,
         )
-
-    def cross_validation(
-        self,
-        project="DCASE2024/wav-test",
-        api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ==",
-        num_train_machines: int = 5,
-        num_splits: int = 5,
-        k_smote: int = 5,
-        batch_size: int = 8,
-        num_instances_factor: int = 100,
-        lora: bool = False,
-        r: int = 8,
-        lora_alpha: int = 8,
-        lora_dropout: float = 0.0,
-        emb_size: int = None,
-        loss_type: str = "adacos",
-        margin: int = None,
-        scale: int = None,
-        learning_rate: float = 1e-5,
-        scheduler_type: str = "linear_restarts",
-        step_warmup: int = 8,
-        min_lr: float = None,
-        step_accumulation: int = 8,
-        k_neighbors: int = 2,
-        HPO: bool = True,
-        trial: optuna.trial.Trial = None,
-    ):
-        """
-        perform cross validation
-        """
-        # init run
-
-        # get the combinations of machines (list of the machines)
-        combinations = self.sample_machines(
-            num_train_machines=num_train_machines, num_splits=num_splits
-        )
-
-        # get data
-        dataset_smote = self.load_dataset_tensor(k_smote=k_smote, kind="smote")
-        dataset_test = self.load_dataset_tensor(k_smote=k_smote, kind="test")
-
-        # cross validation
-        for idx_split, list_machines in enumerate(combinations):
-
-            # sort data based on list_machines
-            num_classes = self.label_machine(list_machines=list_machines)
-            dataset_smote = self.sort_data_machines(
-                dataset=dataset_smote, list_machines=list_machines
-            )
-            dataset_test = self.sort_data_machines(
-                dataset=dataset_test, list_machines=list_machines
-            )
-
-            # turn to data loader
-            num_instances = num_instances_factor * batch_size
-            dataloader_smote_uniform = self.data_loader(
-                dataset=dataset_smote,
-                batch_size=batch_size,
-                num_iterations=num_instances_factor,
-                uniform_sampling=True,
-            )
-            dataloader_smote_attritbute = self.data_loader(
-                dataset=dataset_smote, batch_size=batch_size
-            )
-            dataloader_test_attribute = self.data_loader(
-                dataset=dataset_test, batch_size=batch_size
-            )
-
-            # init run
-            run = neptune.init_run(project=project, api_token=api_token)
-
-            # load model
-            name_saved_model = self.name_saved_model()
-            input_size = (
-                dataloader_test_attribute.dataset.tensors[0].shape[1] // self.fs
-            )
-            model = self.load_model(
-                input_size=input_size,
-                emb_size=emb_size,
-                lora=lora,
-                r=r,
-                lora_alpha=lora_alpha,
-                lora_dropout=lora_dropout,
-            )
-
-            # model to device
-            if self.n_gpus > 1:
-                model = nn.DataParallel(
-                    model, device_ids=list(range(self.n_gpus)), dim=0
-                )
-            model = model.to(self.device)
-            num_params = sum(p.numel() for p in model.parameters())
-            num_params_trainable = sum(
-                p.numel() for p in model.parameters() if p.requires_grad
-            )
-
-            # load loss
-            if emb_size == None:
-                emb_size = model.embedding_asp
-            loss = self.load_loss(
-                loss_type=loss_type,
-                num_classes=num_classes,
-                emb_size=emb_size,
-                margin=margin,
-                scale=scale,
-            )
-
-            # optimizer
-            parameters = list(model.parameters()) + list(loss.parameters())
-            optimizer = torch.optim.AdamW(parameters, lr=learning_rate)
-
-            # load scheduler
-            scheduler = self.load_scheduler(
-                optimizer=optimizer,
-                scheduler_type=scheduler_type,
-                step_warmup=step_warmup,
-                min_lr=min_lr,
-            )
-
-            # hyperparameters and configurations
-            hyperparameters = self.hyperparameters_configuration_dict(
-                k_smote=k_smote,
-                lora=lora,
-                r=r,
-                lora_alpha=lora_alpha,
-                lora_dropout=lora_dropout,
-                batch_size=batch_size,
-                num_instances_factor=num_instances_factor,
-                num_instances=num_instances,
-                loss_type=loss_type,
-                learning_rate=learning_rate,
-                step_warmup=step_warmup,
-                step_accumulation=step_accumulation,
-                k_neighbors=k_neighbors,
-                HPO=HPO,
-                emb_size=emb_size,
-                margin=margin,
-                scale=scale,
-                trial=trial,
-                model_name=name_saved_model,
-                input_size=input_size,
-                trial_number=trial.number,
-                index_split=idx_split,
-            )
-
-            configuration = self.hyperparameters_configuration_dict(
-                seed=self.seed,
-                num_params=num_params,
-                num_params_trainable=num_params_trainable,
-                n_gpus=self.n_gpus,
-                device=stringify_unsupported(self.device),
-                vram=self.vram,
-            )
-
-    def check_function(self):
-        return self.hyperparameters_configuration_dict(seed=self.seed)
 
 
 if __name__ == "__main__":
