@@ -66,7 +66,7 @@ class AnomalyDetection(ModelDataPrepraration):
         # load data
         (
             dataset_smote,
-            datase_train_attribute,
+            dataset_train_attribute,
             dataset_test_attribute,
         ) = self.load_dataset_tensor(k_smote=k_smote)
 
@@ -84,25 +84,21 @@ class AnomalyDetection(ModelDataPrepraration):
             name_trial = f"trial {trial.number} split {index_split}"
             run["name_trial"] = name_trial
 
-        num_classes = (
-            self.num_classes_attribute()
-            if not HPO
-            else len(self.label_machine(list_machines=list_machines))
-        )
+        num_classes = self.num_classes_attribute()
 
         # dataloader
         num_instances = batch_size * num_iterations
         dataloader_smote_uniform = self.data_loader(
             dataset=dataset_smote,
             batch_size=batch_size,
-            num_iteration=num_iterations,
+            num_iterations=num_iterations,
             uniform_sampling=True,
         )
         dataloader_smote_attribute = self.data_loader(
             dataset=dataset_smote, batch_size=batch_size
         )
         dataloader_train_attribute = self.data_loader(
-            dataset=datase_train_attribute, batch_size=batch_size
+            dataset=dataset_train_attribute, batch_size=batch_size
         )
         dataloader_test_attribute = self.data_loader(
             dataset=dataset_test_attribute, batch_size=batch_size
