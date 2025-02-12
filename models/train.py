@@ -1108,16 +1108,16 @@ if __name__ == "__main__":
         study_name = "dcase24_hpo"
         n_trials_total = 100
 
+        # fix hyperparameters
+        project = "DCASE2024/dcase-HPO"
+        api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
+        k_smote = 5
+        batch_size = 64
+        num_train_machines = 5
+        num_splits = 5
+
         # objective functions
         def objective(trial: optuna.trial.Trial):
-
-            # fix hyperparameters
-            project = "DCASE2024/dcase-HPO"
-            api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
-            k_smote = 5
-            batch_size = 64
-            num_train_machines = 5
-            num_splits = 5
 
             # tuned hyperparamters
             num_iterations = trial.suggest_int(
@@ -1247,6 +1247,8 @@ if __name__ == "__main__":
                 api_token=api_token,
                 k_smote=k_smote,
                 batch_size=batch_size,
+                num_train_machines=num_train_machines,
+                num_splits=num_splits,
                 **best_trial_params,
             )
 
