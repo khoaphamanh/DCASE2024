@@ -20,6 +20,7 @@ from torch.optim.lr_scheduler import (
     CosineAnnealingWarmRestarts,
 )
 import optuna
+from optuna.trial import TrialState
 import random
 from preparation import ModelDataPrepraration
 
@@ -60,6 +61,13 @@ class AnomalyDetection(ModelDataPrepraration):
         """
         main function to find the result
         """
+
+        if self.vram > 40:
+            batch_size = 64
+        elif self.vram > 11:
+            batch_size = 32
+        print("List machine", list_machines)
+
         # init neptune
         run = neptune.init_run(project=project, api_token=api_token)
 
@@ -78,6 +86,7 @@ class AnomalyDetection(ModelDataPrepraration):
             dataset_train_attribute = self.sort_data_machines(
                 dataset=dataset_train_attribute, list_machines=list_machines
             )
+            print("sort data test")
             dataset_test_attribute = self.sort_data_machines(
                 dataset=dataset_test_attribute, list_machines=list_machines
             )
@@ -202,6 +211,9 @@ class AnomalyDetection(ModelDataPrepraration):
             scheduler=scheduler,
         )
 
+        # stop the run
+        run.stop()
+
         # save the pretrained mode, loss, optimizer and hyperparameters
         if not HPO:
             (
@@ -248,13 +260,14 @@ class AnomalyDetection(ModelDataPrepraration):
         emb_size = hyperparameters["emb_size"]
         k_neighbors = hyperparameters["k_neighbors"]
         num_iterations = hyperparameters["num_iterations"]
+        list_machines = hyperparameters["list_machines"]
         HPO = hyperparameters["HPO"]
         if HPO:
             trial = hyperparameters["trial"]
             index_split = hyperparameters["index_split"]
 
         # step report and evaluation
-        step_eval = 10
+        step_eval = 5
         step_lr = 0
         step_hpo = 0
 
@@ -341,6 +354,7 @@ class AnomalyDetection(ModelDataPrepraration):
                 loss_smote_uniform_total = 0
 
                 # log the learning rate
+                print("change lr")
                 current_lr = optimizer.param_groups[0]["lr"]
                 run["smote_uniform/current_lr"].append(current_lr, step=step_lr)
                 step_lr = step_lr + 1
@@ -426,17 +440,20 @@ class AnomalyDetection(ModelDataPrepraration):
                 )
 
                 # accuracy decision
-                accuracy_decisions = self.accuracy_decision(
-                    decision_anomaly_score_test=decision_anomaly_score_test
-                )
-                for typ_l, acc in zip(type_labels_test, accuracy_decisions):
-                    run["{}/accuracy_{}".format("decision", typ_l)].append(
-                        acc, step=iter_smote_uniform
+                if not HPO:
+                    accuracy_decisions = self.accuracy_decision(
+                        decision_anomaly_score_test=decision_anomaly_score_test
                     )
+                    for typ_l, acc in zip(type_labels_test, accuracy_decisions):
+                        run["{}/accuracy_{}".format("decision", typ_l)].append(
+                            acc, step=iter_smote_uniform
+                        )
 
                 # anomaly score and hmean
                 hmean_img, hmean_total = self.auc_pauc_hmean(
-                    decision_anomaly_score_test=decision_anomaly_score_test
+                    decision_anomaly_score_test=decision_anomaly_score_test,
+                    list_machines=list_machines,
+                    y_true_test_array=y_true_test_array,
                 )
 
                 run["score/hmean"].append(hmean_total, step=iter_smote_uniform)
@@ -445,7 +462,7 @@ class AnomalyDetection(ModelDataPrepraration):
 
                 # check pruning for HPO
                 if HPO:
-                    trial.report(accuracy_smote_uniform, step=step_hpo)
+                    trial.report(hmean_total, step=step_hpo)
                     if trial.should_prune() or np.isnan(loss_smote_uniform_total):
                         raise optuna.exceptions.TrialPruned()
                     step_hpo = step_hpo + 1
@@ -719,6 +736,7 @@ class AnomalyDetection(ModelDataPrepraration):
 
         # ids of the test data
         ids = self.id_timeseries_analysis(keys="test")
+        ids = y_true_test_array[:, 0]
         # indices = self.get_indices(y_true_array=y_pred_test_array,type_labels=["test"])
 
         # anomaly detection score list
@@ -913,7 +931,9 @@ class AnomalyDetection(ModelDataPrepraration):
 
         return accuracy
 
-    def auc_pauc_hmean(self, decision_anomaly_score_test):
+    def auc_pauc_hmean(
+        self, decision_anomaly_score_test, list_machines=None, y_true_test_array=None
+    ):
         """
         calculate auc pauc of test machine domain
         given anomaly score shape (id, anomaly score) and dicision test shape (id, condition pred)
@@ -923,8 +943,11 @@ class AnomalyDetection(ModelDataPrepraration):
         y_true_test_condition_array = self.true_test_condition_array()
 
         # get the indices for each type_labels_hmean
+        type_labels_hmean, type_labels_hmean_auc, type_labels_hmean_pauc = (
+            self.type_labels_hmean(list_machines=list_machines)
+        )
         indices = self.get_indices(
-            y_true_array=y_true_test_condition_array, type_labels=self.type_labels_hmean
+            y_true_array=y_true_test_condition_array, type_labels=type_labels_hmean
         )
 
         # fpr_max and fpr_min for pauc
@@ -932,7 +955,7 @@ class AnomalyDetection(ModelDataPrepraration):
         fpr_max = 0.1
 
         # create suplots
-        n_cols = 7
+        n_cols = len(self.machines) if list_machines == None else len(list_machines)
         n_rows = 3
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(25, 20))
         axes = axes.flatten()
@@ -943,11 +966,15 @@ class AnomalyDetection(ModelDataPrepraration):
         pauc_test_2 = []
 
         # loop through all the axes, each axes is plot of auc and pauc of machine_domain
-        for i in range(len(self.type_labels_hmean)):
+        for i in range(len(type_labels_hmean)):
 
             # get the name of label, y_score, y_true
-            test_machine_domain = self.type_labels_hmean[i]
-            idx = indices[i]
+            test_machine_domain = type_labels_hmean[i]
+            # idx = indices[i]
+            id_test_machine_domain = self.id_timeseries_analysis(
+                keys=test_machine_domain
+            )
+            idx = np.where(np.isin(y_true_test_array[:, 0], id_test_machine_domain))[0]
             y_score = decision_anomaly_score_test[idx, 2]
             y_true = y_true_test_condition_array[idx, 1]
             y_pred = decision_anomaly_score_test[idx, 1]
@@ -961,23 +988,18 @@ class AnomalyDetection(ModelDataPrepraration):
             pauc = roc_auc_score(y_true=y_true, y_score=y_score, max_fpr=fpr_max)
             # print("pauc:", pauc)
 
-            # calculate h mean
-            hmean_machine_domain = hmean([auc, pauc])
-
             # accuracy machine domain
             accuraccy_machine_domain = accuracy_score(y_pred=y_pred, y_true=y_true)
 
             # plot the auc
             name_auc = (
-                "AUC_12" if test_machine_domain in self.type_labels_hmean_1 else "AUC"
+                "AUC_12" if test_machine_domain in type_labels_hmean_auc else "AUC"
             )
             axes[i].plot(fpr, tpr, label="{} {:.4f}".format(name_auc, auc))
 
             # plot the pauc
             name_pauc = (
-                "PAUC_1"
-                if test_machine_domain in self.type_labels_hmean_1
-                else "PAUC_2"
+                "PAUC_1" if test_machine_domain in type_labels_hmean_auc else "PAUC_2"
             )
             axes[i].fill_between(
                 fpr,
@@ -997,7 +1019,7 @@ class AnomalyDetection(ModelDataPrepraration):
             axes[i].legend(loc="lower right")
 
             # save to list
-            if test_machine_domain in self.type_labels_hmean_1:
+            if test_machine_domain in type_labels_hmean_auc:
                 pauc_test_1.append(pauc)
                 auc_test.append(auc)
 
@@ -1043,20 +1065,20 @@ if __name__ == "__main__":
     r = 64
     lora_alpha = 16
     lora_dropout = 0.1
-    batch_size = 32
+    batch_size = 12
     loss_type = "adacos"
     learning_rate = 0.0001 if not lora else 1e-3
     step_warmup = 120 if not lora else 10
-    step_accumulation = 8
+    step_accumulation = 1
     k_neighbors = 2
-    num_train_machines = 5
-    num_splits = 5
+    num_train_machines = 4
+    num_splits = 2
     min_lr = 1e-6
     emb_size = None
     margin = None
     scale = None
     trial = None
-    HPO = True
+    HPO = False
 
     # hyperparameters optimization
     if HPO:
@@ -1071,28 +1093,33 @@ if __name__ == "__main__":
         path_db_hpo = os.path.join(path_directory_HPO, db_hpo)
         db_hpo_sqlite = "sqlite:///{}".format(path_db_hpo)
 
+        # csv file for hpo
+        csv_hpo = "hpo.csv"
+        path_csv_hpo = os.path.join(path_directory_HPO, csv_hpo)
+
         # optuna configuration
         sampler = optuna.samplers.TPESampler(seed=ad.seed)
         pruner = optuna.pruners.MedianPruner()
         study_name = "dcase24_hpo"
-        n_trials_total = 100
+        n_trials_total = 7
 
         # objective functions
         def objective(trial: optuna.trial.Trial):
+
             # hyperparameters
-            project = "DCASE2024/dcase-HPO1"
+            project = "DCASE2024/dcase-HPO"
 
             learning_rate = trial.suggest_float(
                 name="learning_rate", low=1e-6, high=1e-1, log=True
             )
             num_iterations = trial.suggest_int(
                 name="num_iterations",
-                low=10,
-                high=100,
+                low=1,
+                high=3,
                 step=1,
             )
 
-            step_warmup = trial.suggest_int(name="step_warmup", low=8, high=256, step=2)
+            step_warmup = trial.suggest_int(name="step_warmup", low=1, high=3, step=1)
 
             # more hyperparameters
             loss_type = trial.suggest_categorical(
@@ -1150,9 +1177,26 @@ if __name__ == "__main__":
             pruner=pruner,
         )
 
+        # Export the study trials to a pandas DataFrame
+        df_trial = study.trials_dataframe()
+
+        # Save the DataFrame to a CSV file
+        df_trial.to_csv(path_csv_hpo, index=False)
+
         # run trial if not enough n_trials_total
         if len(study.trials) < n_trials_total:
+
+            # reload traila if in fail or running state
+            if len(study.trials) >= 1 and study.trials[-1].state in [
+                TrialState.FAIL,
+                TrialState.RUNNING,
+            ]:
+                failed_trial_params = study.trials[-1].params
+                study.enqueue_trial(failed_trial_params)
+
+            # perform HPO
             study.optimize(objective, n_trials=n_trials_total)
+
         else:
             pruned_trials = study.get_trials(
                 deepcopy=False, states=[optuna.trial.TrialState.PRUNED]
@@ -1174,19 +1218,25 @@ if __name__ == "__main__":
             for key, value in best_trial_params.items():
                 print("    {}: {}".format(key, value))
 
-        # load the hpo trials as csv
-        csv_hpo = "hpo_trials_1.csv"
-        path_csv_hpo = os.path.join(path_directory_HPO, csv_hpo)
-        trials_df = study.trials_dataframe()
-        trials_df.to_csv(path_csv_hpo)
+            ad.anomaly_detection(
+                project=project,
+                api_token=api_token,
+                k_smote=k_smote,
+                batch_size=batch_size,
+                step_accumulation=step_accumulation,
+                k_neighbors=k_neighbors,
+                min_lr=min_lr,
+                emb_size=emb_size,
+                **best_trial_params,
+            )
 
     else:
         learning_rate = 0.01
-        batch_size = 12
-        step_accumulation = 32
-        num_instances_factor = 100
+        batch_size = 48
+        step_accumulation = 1
+        num_iterations = 100
         step_warmup = 2208
-        loss_type = "arcface"  # "adacos"
+        loss_type = "adacos"
         margin = 5
         scale = 172
         lora = False
@@ -1217,7 +1267,7 @@ if __name__ == "__main__":
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             batch_size=batch_size,
-            num_iterations=num_instances_factor,
+            num_iterations=num_iterations,
             loss_type=loss_type,
             learning_rate=learning_rate,
             step_warmup=step_warmup,
