@@ -62,10 +62,10 @@ class AnomalyDetection(ModelDataPrepraration):
         main function to find the result
         """
 
-        if self.vram > 40:
-            batch_size = 64
-        elif self.vram > 11:
-            batch_size = 32
+        # if self.vram > 40:
+        #     batch_size = 64
+        # elif self.vram > 11:
+        #     batch_size = 32
         print("List machine", list_machines)
 
         # init neptune
@@ -267,7 +267,7 @@ class AnomalyDetection(ModelDataPrepraration):
             index_split = hyperparameters["index_split"]
 
         # step report and evaluation
-        step_eval = 20
+        step_eval = 50
         step_lr = 0
         step_hpo = 0
 
@@ -1122,8 +1122,8 @@ if __name__ == "__main__":
             # tuned hyperparamters
             num_iterations = trial.suggest_int(
                 name="num_iterations",
-                low=500,
-                high=10000,
+                low=1000,
+                high=15000,
                 step=100,
             )
 
@@ -1156,7 +1156,7 @@ if __name__ == "__main__":
             )
 
             step_accumulation = trial.suggest_int(
-                name="step_accumulation", low=2, high=128, step=2
+                name="step_accumulation", low=1, high=20, step=1
             )
 
             k_neighbors = trial.suggest_int(name="k_neighbors", low=2, high=128, step=1)
