@@ -267,7 +267,7 @@ class AnomalyDetection(ModelDataPrepraration):
             index_split = hyperparameters["index_split"]
 
         # step report and evaluation
-        step_eval = 5
+        step_eval = 20
         step_lr = 0
         step_hpo = 0
 
@@ -354,7 +354,6 @@ class AnomalyDetection(ModelDataPrepraration):
                 loss_smote_uniform_total = 0
 
                 # log the learning rate
-                print("change lr")
                 current_lr = optimizer.param_groups[0]["lr"]
                 run["smote_uniform/current_lr"].append(current_lr, step=step_lr)
                 step_lr = step_lr + 1
@@ -462,7 +461,9 @@ class AnomalyDetection(ModelDataPrepraration):
 
                 # check pruning for HPO
                 if HPO:
-                    trial.report(hmean_total, step=step_hpo)
+                    trial.report(
+                        hmean_total, step=index_split * num_iterations + step_hpo
+                    )
                     if trial.should_prune() or np.isnan(loss_smote_uniform_total):
                         raise optuna.exceptions.TrialPruned()
                     step_hpo = step_hpo + 1
@@ -1058,27 +1059,31 @@ if __name__ == "__main__":
     """
     test model anomaly detection
     """
-    project = "DCASE2024/wav-test"
+    project = "DCASE2024/dcase-HPO"
     api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
-    k_smote = 5
-    lora = False
-    r = 64
-    lora_alpha = 16
-    lora_dropout = 0.1
-    batch_size = 12
-    loss_type = "adacos"
-    learning_rate = 0.0001 if not lora else 1e-3
-    step_warmup = 120 if not lora else 10
-    step_accumulation = 1
-    k_neighbors = 2
-    num_train_machines = 4
-    num_splits = 2
-    min_lr = 1e-6
-    emb_size = None
-    margin = None
-    scale = None
-    trial = None
-    HPO = False
+    k_smote: int = 5
+    batch_size: int = 64
+    num_iterations: int = 1000
+    lora: bool = False
+    r: int = 8
+    lora_alpha: int = 8
+    lora_dropout: float = 0.0
+    emb_size: int = None
+    loss_type: str = "adacos"
+    margin: int = None
+    scale: int = None
+    learning_rate: float = 1e-5
+    scheduler_type: str = "linear_restarts"
+    step_warmup: int = 8
+    min_lr: float = None
+    step_accumulation: int = 8
+    k_neighbors: int = 2
+    trial: optuna.trial.Trial = None
+    index_split = None
+    num_train_machines: int = 5
+    num_splits: int = 5
+    list_machines = None
+    HPO: bool = False
 
     # hyperparameters optimization
     if HPO:
@@ -1101,42 +1106,60 @@ if __name__ == "__main__":
         sampler = optuna.samplers.TPESampler(seed=ad.seed)
         pruner = optuna.pruners.MedianPruner()
         study_name = "dcase24_hpo"
-        n_trials_total = 7
+        n_trials_total = 100
 
         # objective functions
         def objective(trial: optuna.trial.Trial):
 
-            # hyperparameters
+            # fix hyperparameters
             project = "DCASE2024/dcase-HPO"
+            api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
+            k_smote = 5
+            batch_size = 64
+            num_train_machines = 5
+            num_splits = 5
 
-            learning_rate = trial.suggest_float(
-                name="learning_rate", low=1e-6, high=1e-1, log=True
-            )
+            # tuned hyperparamters
             num_iterations = trial.suggest_int(
                 name="num_iterations",
-                low=1,
-                high=3,
-                step=1,
+                low=500,
+                high=10000,
+                step=100,
             )
 
-            step_warmup = trial.suggest_int(name="step_warmup", low=1, high=3, step=1)
+            learning_rate = trial.suggest_float(
+                name="learning_rate", low=1e-7, high=1e-1, log=True
+            )
 
-            # more hyperparameters
+            step_warmup = trial.suggest_int(
+                name="step_warmup", low=2, high=500, step=10
+            )
+
+            emb_size = trial.suggest_int(name="emb_size", low=2, high=2048, step=2)
+
             loss_type = trial.suggest_categorical(
                 name="loss_type", choices=["adacos", "arcface"]
             )
+            margin = trial.suggest_float(name="margin", low=0, high=5, step=0.1)
+            scale = trial.suggest_int(name="scale", low=2, high=256, step=2)
+
             scheduler_type = trial.suggest_categorical(
                 name="scheduler_type", choices=["cosine_restarts", "linear_restarts"]
             )
-            margin = trial.suggest_float(name="margin", low=0, high=5, step=0.1)
-            scale = trial.suggest_float(name="scale", low=2, high=256, step=2)
-            lora = trial.suggest_categorical(name="lora", choices=[True, False])
+            min_lr = trial.suggest_float(name="min_lr", low=1e-7, high=1e-1, log=True)
 
+            lora = trial.suggest_categorical(name="lora", choices=[True, False])
             r = trial.suggest_int(name="r", low=8, high=256, step=2)
             lora_alpha = trial.suggest_int(name="lora_alpha", low=2, high=128, step=2)
             lora_dropout = trial.suggest_float(
                 name="lora_dropout", low=0.1, high=1, step=0.1
             )
+
+            step_accumulation = trial.suggest_int(
+                name="step_accumulation", low=2, high=128, step=2
+            )
+
+            k_neighbors = trial.suggest_int(name="k_neighbors", low=2, high=128, step=1)
 
             # mean for cv
             hmean_cv = ad.cross_validation(
@@ -1218,46 +1241,16 @@ if __name__ == "__main__":
             for key, value in best_trial_params.items():
                 print("    {}: {}".format(key, value))
 
+            # apply the best hyperparamters for final test
             ad.anomaly_detection(
                 project=project,
                 api_token=api_token,
                 k_smote=k_smote,
                 batch_size=batch_size,
-                step_accumulation=step_accumulation,
-                k_neighbors=k_neighbors,
-                min_lr=min_lr,
-                emb_size=emb_size,
                 **best_trial_params,
             )
 
     else:
-        learning_rate = 0.01
-        batch_size = 48
-        step_accumulation = 1
-        num_iterations = 100
-        step_warmup = 2208
-        loss_type = "adacos"
-        margin = 5
-        scale = 172
-        lora = False
-        scheduler_type = "cosine_restarts"
-        min_lr = 1e-5
-        r = 118
-        lora_alpha = 74
-        lora_dropout = 0.1
-
-        # learning_rate = 0.08119529850299605
-        # num_instances = 32 * 272
-        # step_warmup = 156
-        # loss_type = "arcface"
-        # margin = 4.7
-        # scale = 218.0
-        # lora = False
-        # r = 8
-        # lora_alpha = 14
-        # lora_dropout = 0.3
-        # emb_size = 3
-
         ad.anomaly_detection(
             project=project,
             api_token=api_token,
