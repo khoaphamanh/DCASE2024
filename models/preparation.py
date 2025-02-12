@@ -254,7 +254,8 @@ class ModelDataPrepraration(DataPreprocessing):
         # sort X and y based on labels
         X = X[indices_labels]
         y = y[indices_labels]
-        print("y shape:", y.shape)
+        if y.ndim != 1:
+            print("y unique:", torch.unique(y[:, 0]))
 
         # turn X and y back to Tensor Dataset
         dataset = TensorDataset(X, y)
@@ -343,7 +344,9 @@ class ModelDataPrepraration(DataPreprocessing):
             return dictionary
 
         # pop some keys for hyperparameters dictionary
-        if set({"lora", "HPO", "loss_type"}).issubset(set(kwargs.keys())):
+        if set({"lora", "HPO", "loss_type", "list_machines"}).issubset(
+            set(kwargs.keys())
+        ):
             # lora
             lora = kwargs["lora"]
             if not lora:
@@ -354,8 +357,6 @@ class ModelDataPrepraration(DataPreprocessing):
             if not HPO:
                 dict_pop(kwargs, "trial")
                 dict_pop(kwargs, "num_train_machines")
-                dict_pop(kwargs, "num_splits")
-                dict_pop(kwargs, "list_machines")
 
             # arcface
             loss_type = kwargs["loss_type"]
