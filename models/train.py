@@ -1083,7 +1083,7 @@ if __name__ == "__main__":
     num_train_machines: int = 5
     num_splits: int = 5
     list_machines = None
-    HPO: bool = False
+    HPO: bool = True
 
     # hyperparameters optimization
     if HPO:
