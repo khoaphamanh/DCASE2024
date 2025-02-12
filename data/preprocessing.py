@@ -110,24 +110,17 @@ class DataPreprocessing:
             self.path_data_name_directory, "{}_train_label_smote.npy".format(data_name)
         )
 
-        # type labels for hmean calculation
-        self.type_labels_hmean = [
-            "{}_{}_{}".format("test", m, d)
-            for d in self.domain_data
-            for m in self.machines
-        ] + ["{}_{}".format("test", m) for m in self.machines]
-
-        # type labels hmean 1 (test_machine_domain) and 2 (test_machine)
-        self.type_labels_hmean_1 = [
-            typ_l
-            for typ_l in self.type_labels_hmean
-            if "source" in typ_l or "target" in typ_l
-        ]
-        self.type_labels_hmean_2 = [
-            typ_l
-            for typ_l in self.type_labels_hmean
-            if typ_l not in self.type_labels_hmean_1
-        ]
+        # # type labels hmean 1 (test_machine_domain) and 2 (test_machine)
+        # self.type_labels_hmean_1 = [
+        #     typ_l
+        #     for typ_l in self.type_labels_hmean
+        #     if "source" in typ_l or "target" in typ_l
+        # ]
+        # self.type_labels_hmean_2 = [
+        #     typ_l
+        #     for typ_l in self.type_labels_hmean
+        #     if typ_l not in self.type_labels_hmean_1
+        # ]
 
     def read_raw_data(self):
         """
@@ -578,6 +571,38 @@ class DataPreprocessing:
 
             return label_machine_list
 
+    def type_labels_hmean(self, list_machines=None):
+        """
+        type labels machine for hpo and final test
+        """
+        # list machine is None for final test else HPO
+        if list_machines == None:
+            list_machines = self.machines
+
+        # type labels for hmean calculation of list machine
+        type_labels_hmean = [
+            "{}_{}_{}".format("test", m, d)
+            for d in self.domain_data
+            for m in list_machines
+        ] + ["{}_{}".format("test", m) for m in list_machines]
+
+        # type labels for hmean auc calculation of list machine
+        type_labels_hmean_auc = [
+            typ_l
+            for typ_l in type_labels_hmean
+            if "source" in typ_l or "target" in typ_l
+        ]
+
+        # type labels for hmean pauc calculation of list machine
+        type_labels_hmean_pauc = [
+            typ_l for typ_l in type_labels_hmean if typ_l not in type_labels_hmean_auc
+        ]
+
+        return type_labels_hmean, type_labels_hmean_auc, type_labels_hmean_pauc
+
+    def type_labels_hmean_auc(self, list_machine=None):
+        pass
+
     def log_melspectrogram(
         self,
         data,
@@ -679,9 +704,9 @@ if __name__ == "__main__":
     # num_classes_attribute = data_preprocessing.num_classes_attribute()
     # print("num_classes_attribute:", num_classes_attribute)
 
-    # train_data_smote, train_label_smote = data_preprocessing.smote()
-    # print("train_data_smote shape:", train_data_smote.shape)
-    # print("train_label_smote:", train_label_smote.shape)
+    train_data_smote, train_label_smote = data_preprocessing.smote()
+    print("train_data_smote shape:", train_data_smote.shape)
+    print("train_label_smote:", train_label_smote.shape)
 
     # label_train_attribute_unique, label_train_attribute_counts = np.unique(
     #     train_label_smote, return_counts=True
