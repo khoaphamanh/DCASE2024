@@ -17,11 +17,9 @@ import matplotlib.pyplot as plt
 from scipy.stats import hmean
 from torch.optim.lr_scheduler import (
     LambdaLR,
-    CosineAnnealingWarmRestarts,
 )
 import optuna
 from optuna.trial import TrialState
-import random
 from preparation import ModelDataPrepraration
 
 
@@ -36,7 +34,7 @@ class AnomalyDetection(ModelDataPrepraration):
         api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ==",
         k_smote: int = 5,
         batch_size: int = 8,
-        num_iterations: int = 100,
+        epochs: int = 100,
         lora: bool = False,
         r: int = 8,
         lora_alpha: int = 8,
@@ -49,7 +47,6 @@ class AnomalyDetection(ModelDataPrepraration):
         scheduler_type: str = "linear_restarts",
         step_warmup: int = 8,
         min_lr: float = None,
-        step_accumulation: int = 8,
         k_neighbors: int = 2,
         HPO: bool = False,
         trial: optuna.trial.Trial = None,
@@ -96,13 +93,6 @@ class AnomalyDetection(ModelDataPrepraration):
         num_classes = self.num_classes_attribute()
 
         # dataloader
-        num_instances = batch_size * num_iterations
-        dataloader_smote_uniform = self.data_loader(
-            dataset=dataset_smote,
-            batch_size=batch_size,
-            num_iterations=num_iterations,
-            uniform_sampling=True,
-        )
         dataloader_smote_attribute = self.data_loader(
             dataset=dataset_smote, batch_size=batch_size
         )
@@ -165,12 +155,10 @@ class AnomalyDetection(ModelDataPrepraration):
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             batch_size=batch_size,
-            num_iterations=num_iterations,
-            num_instances=num_instances,
+            epochs=epochs,
             loss_type=loss_type,
             learning_rate=learning_rate,
             step_warmup=step_warmup,
-            step_accumulation=step_accumulation,
             k_neighbors=k_neighbors,
             HPO=HPO,
             emb_size=emb_size,
@@ -200,7 +188,6 @@ class AnomalyDetection(ModelDataPrepraration):
         # training attribute classification
         output_training_loop = self.training_loop(
             run=run,
-            dataloader_smote_uniform=dataloader_smote_uniform,
             dataloader_smote_attribute=dataloader_smote_attribute,
             dataloader_train_attribute=dataloader_train_attribute,
             dataloader_test_attribute=dataloader_test_attribute,
@@ -240,7 +227,6 @@ class AnomalyDetection(ModelDataPrepraration):
     def training_loop(
         self,
         run: neptune.init_run,
-        dataloader_smote_uniform: DataLoader,
         dataloader_smote_attribute: DataLoader,
         dataloader_train_attribute: DataLoader,
         dataloader_test_attribute: DataLoader,
@@ -255,218 +241,197 @@ class AnomalyDetection(ModelDataPrepraration):
         """
 
         # get the hyperparameters
-        step_accumulation = hyperparameters["step_accumulation"]
         batch_size = hyperparameters["batch_size"]
         emb_size = hyperparameters["emb_size"]
         k_neighbors = hyperparameters["k_neighbors"]
-        num_iterations = hyperparameters["num_iterations"]
+        epochs = hyperparameters["epochs"]
         list_machines = hyperparameters["list_machines"]
         HPO = hyperparameters["HPO"]
+        emb_size = hyperparameters["emb_size"]
+        num_instances_smote = dataloader_smote_attribute.dataset.tensors[0].shape[0]
+        print("num_instances_smote:", num_instances_smote)
+
+        # trials for hpo
         if HPO:
             trial = hyperparameters["trial"]
             index_split = hyperparameters["index_split"]
 
-        # step report and evaluation
-        step_eval = 50
-        step_lr = 0
-        step_hpo = 0
+        for ep in range(epochs):
 
-        # loss train
-        loss_smote_uniform_total = 0
+            # loss train
+            loss_smote_attribute_total = 0
 
-        # accuracy as objective function for HPO
-        if HPO:
-            y_pred_smote_uniform_array = np.empty(
-                batch_size * step_accumulation,
+            # saved array
+            embedding_smote_attribute_array = np.empty(
+                shape=(num_instances_smote, emb_size)
             )
-            y_true_smote_uniform_array = np.empty(
-                batch_size * step_accumulation,
+            print(
+                "embedding_smote_attribute_array shape:",
+                embedding_smote_attribute_array.shape,
             )
+            y_pred_label_smote_attribute_array = np.empty(shape=(num_instances_smote,))
+            y_true_label_smote_attribute_array = np.empty(shape=(num_instances_smote,))
 
-        for iter_smote_uniform, (X_smote_uniform, y_smote_uniform) in enumerate(
-            dataloader_smote_uniform
-        ):
-            # model in traning model
-            model.train()
-            loss.train()
+            for iter_smote_attribute, (
+                X_smote_attribute,
+                y_smote_attribue,
+            ) in enumerate(dataloader_smote_attribute):
 
-            # data to device
-            X_smote_uniform = X_smote_uniform.to(self.device)
-            y_smote_uniform = y_smote_uniform.to(self.device)
+                print("iter_smote_attribute", iter_smote_attribute)
 
-            # forward pass
-            embedding_smote_uniform = model(X_smote_uniform)
+                # model in traning model
+                model.train()
+                loss.train()
 
-            # calculate the loss
-            loss_smote_uniform = loss(embedding_smote_uniform, y_smote_uniform)
-            loss_smote_uniform_total = (
-                loss_smote_uniform_total + loss_smote_uniform.item()
-            )
+                # data to device
+                X_smote_attribute = X_smote_attribute.to(self.device)
+                y_smote_attribue = y_smote_attribue.to(self.device)
 
-            # update the loss
-            loss_smote_uniform.backward()
+                # forward pass
+                embedding_smote_attribute = model(X_smote_attribute)
 
-            # save to array if HPO
-            if HPO:
-                # iter for saved array y_true y_pred
-                iter_smote_uniform_accumulated = iter_smote_uniform % step_accumulation
-                y_true_smote_uniform_array[
-                    iter_smote_uniform_accumulated
-                    * batch_size : iter_smote_uniform_accumulated
+                # calculate the loss
+                loss_smote_attribute = loss(embedding_smote_attribute, y_smote_attribue)
+                loss_smote_attribute_total = (
+                    loss_smote_attribute_total + loss_smote_attribute.item()
+                )
+
+                # update the loss
+                loss_smote_attribute.backward()
+
+                # save to array
+                embedding_smote_attribute_array[
+                    iter_smote_attribute
+                    * batch_size : iter_smote_attribute
                     * batch_size
                     + batch_size
-                ] = y_smote_uniform.cpu().numpy()
+                ] = (embedding_smote_attribute.detach().cpu().numpy())
+
+                y_true_label_smote_attribute_array[
+                    iter_smote_attribute
+                    * batch_size : iter_smote_attribute
+                    * batch_size
+                    + batch_size
+                ] = y_smote_attribue.cpu().numpy()
 
                 y_pred_smote_uniform = loss.pred_labels(
-                    embedding=embedding_smote_uniform, y_true=y_smote_uniform
+                    embedding=embedding_smote_attribute, y_true=y_smote_attribue
                 )
-                y_pred_smote_uniform_array[
-                    iter_smote_uniform_accumulated
-                    * batch_size : iter_smote_uniform_accumulated
+                y_pred_label_smote_attribute_array[
+                    iter_smote_attribute
+                    * batch_size : iter_smote_attribute
                     * batch_size
                     + batch_size
                 ] = y_pred_smote_uniform.cpu().numpy()
 
-            # gradient accumulated and report loss
-            if (iter_smote_uniform + 1) % step_accumulation == 0:
-                # update model weights and zero grad
+                # update weights with optimizer
                 optimizer.step()
                 optimizer.zero_grad()
 
-                # report loss
-                loss_smote_uniform_total = loss_smote_uniform_total / step_accumulation
-                run["smote_uniform/loss_smote_total"].append(
-                    loss_smote_uniform_total, step=iter_smote_uniform
-                )
+            # report loss and accuracy
+            loss_smote_attribute_total = loss_smote_attribute_total / len(
+                dataloader_smote_attribute
+            )
+            run["smote_attribute/loss_smote"].append(
+                loss_smote_attribute_total, step=ep
+            )
 
-                # pruned for hpo
-                if HPO:
-                    # accuracy smote as ojective function
-                    accuracy_smote_uniform = accuracy_score(
-                        y_true=y_true_smote_uniform_array,
-                        y_pred=y_pred_smote_uniform_array,
-                    )
-                    run["smote_uniform/accuracy_smote_uniform"].append(
-                        accuracy_smote_uniform, step=iter_smote_uniform
-                    )
+            accuracy_smote_attribute_total = accuracy_score(
+                y_pred=y_pred_label_smote_attribute_array,
+                y_true=y_true_label_smote_attribute_array,
+            )
+            run["smote_attribute/accuracy_smote"].append(
+                accuracy_smote_attribute_total, step=ep
+            )
 
-                # reset loss_smote_uniform_total
-                loss_smote_uniform_total = 0
+            # log the learning rate
+            current_lr = optimizer.param_groups[0]["lr"]
+            run["smote_uniform/current_lr"].append(current_lr, step=ep)
 
-                # log the learning rate
-                current_lr = optimizer.param_groups[0]["lr"]
-                run["smote_uniform/current_lr"].append(current_lr, step=step_lr)
-                step_lr = step_lr + 1
+            # update scheduler
+            scheduler.step()
 
-                # update scheduler
-                scheduler.step()
+            # type_labels
+            type_labels_train = ["train_source_normal", "train_target_normal"]
+            type_labels_test = [
+                "test_source_normal",
+                "test_target_normal",
+                "test_source_anomaly",
+                "test_target_anomaly",
+            ]
 
-            # report the loss and evaluation mode every 1000 iteration
-            if (
-                iter_smote_uniform + 1
-            ) % step_eval == 0 or iter_smote_uniform + 1 == num_iterations:
-
-                # type_labels
-                type_labels_train = ["train_source_normal", "train_target_normal"]
-                type_labels_test = [
-                    "test_source_normal",
-                    "test_target_normal",
-                    "test_source_anomaly",
-                    "test_target_anomaly",
-                ]
-                type_labels_smote_knn = ["SmoteAttributeKNN"]
-
-                # evaluation mode for train data attribute
-                if not HPO:
-                    (
-                        accuracy_train_dict,
-                        embedding_train_array,
-                        y_true_train_array,
-                        y_pred_label_train_array,
-                    ) = self.evaluation_mode(
-                        run=run,
-                        iter_smote_uniform=iter_smote_uniform,
-                        batch_size=batch_size,
-                        model=model,
-                        loss=loss,
-                        dataloader_attribute=dataloader_train_attribute,
-                        emb_size=emb_size,
-                        type_labels=type_labels_train,
-                    )
-
-                # evaluation mode for test data attribute
+            # evaluation mode for train data attribute
+            if not HPO:
                 (
-                    accuracy_test_dict,
-                    embedding_test_array,
-                    y_true_test_array,
-                    y_pred_label_test_array,
+                    accuracy_train_dict,
+                    embedding_train_array,
+                    y_true_train_array,
+                    y_pred_label_train_array,
                 ) = self.evaluation_mode(
                     run=run,
-                    iter_smote_uniform=iter_smote_uniform,
+                    iter_smote_uniform=iter_smote_attribute,
                     batch_size=batch_size,
                     model=model,
                     loss=loss,
-                    dataloader_attribute=dataloader_test_attribute,
+                    dataloader_attribute=dataloader_train_attribute,
                     emb_size=emb_size,
-                    type_labels=type_labels_test,
+                    type_labels=type_labels_train,
                 )
 
-                # evaluation mode for data smote attribute
-                (
-                    accuracy_smote_dict,
-                    embedding_smote_array,
-                    y_true_smote_array,
-                    y_pred_label_smote_array,
-                ) = self.evaluation_mode(
-                    run=run,
-                    iter_smote_uniform=iter_smote_uniform,
-                    batch_size=batch_size,
-                    model=model,
-                    loss=loss,
-                    dataloader_attribute=dataloader_smote_attribute,
-                    emb_size=emb_size,
-                    type_labels=type_labels_smote_knn,
-                )
+            # evaluation mode for test data attribute
+            (
+                accuracy_test_dict,
+                embedding_test_array,
+                y_true_test_array,
+                y_pred_label_test_array,
+            ) = self.evaluation_mode(
+                run=run,
+                iter_smote_uniform=iter_smote_attribute,
+                batch_size=batch_size,
+                model=model,
+                loss=loss,
+                dataloader_attribute=dataloader_test_attribute,
+                emb_size=emb_size,
+                type_labels=type_labels_test,
+            )
 
-                # use knn to get the decision, anomaly score and knn_pretrained
-                decision_anomaly_score_test, knn_train, scaler = self.decision_knn_1(
-                    k_neighbors=k_neighbors,
-                    embedding_train_array=embedding_smote_array,
-                    embedding_test_array=embedding_test_array,
-                    y_pred_train_array=y_pred_label_smote_array,
-                    y_pred_test_array=y_pred_label_test_array,
-                    y_true_test_array=y_true_test_array,
-                )
+            # use knn to get the decision, anomaly score and knn_pretrained
+            decision_anomaly_score_test, knn_train, scaler = self.decision_knn(
+                k_neighbors=k_neighbors,
+                embedding_train_array=embedding_smote_attribute_array,
+                embedding_test_array=embedding_test_array,
+                y_pred_train_array=y_pred_label_smote_attribute_array,
+                y_pred_test_array=y_pred_label_test_array,
+                y_true_test_array=y_true_test_array,
+            )
 
-                # accuracy decision
-                if not HPO:
-                    accuracy_decisions = self.accuracy_decision(
-                        decision_anomaly_score_test=decision_anomaly_score_test
+            # accuracy decision
+            if not HPO:
+                accuracy_decisions = self.accuracy_decision(
+                    decision_anomaly_score_test=decision_anomaly_score_test
+                )
+                for typ_l, acc in zip(type_labels_test, accuracy_decisions):
+                    run["{}/accuracy_{}".format("decision", typ_l)].append(
+                        acc, step=iter_smote_attribute
                     )
-                    for typ_l, acc in zip(type_labels_test, accuracy_decisions):
-                        run["{}/accuracy_{}".format("decision", typ_l)].append(
-                            acc, step=iter_smote_uniform
-                        )
 
-                # anomaly score and hmean
-                hmean_img, hmean_total = self.auc_pauc_hmean(
-                    decision_anomaly_score_test=decision_anomaly_score_test,
-                    list_machines=list_machines,
-                    y_true_test_array=y_true_test_array,
-                )
+            # anomaly score and hmean
+            hmean_img, hmean_total = self.auc_pauc_hmean(
+                decision_anomaly_score_test=decision_anomaly_score_test,
+                list_machines=list_machines,
+                y_true_test_array=y_true_test_array,
+            )
 
-                run["score/hmean"].append(hmean_total, step=iter_smote_uniform)
-                run["score/auc_pauc_hmean"].append(hmean_img, step=iter_smote_uniform)
-                plt.close()
+            run["score/hmean"].append(hmean_total, step=iter_smote_attribute)
+            run["score/auc_pauc_hmean"].append(hmean_img, step=iter_smote_attribute)
+            plt.close()
 
-                # check pruning for HPO
-                if HPO:
-                    trial.report(
-                        hmean_total, step=index_split * num_iterations + step_hpo
-                    )
-                    if trial.should_prune() or np.isnan(loss_smote_uniform_total):
-                        raise optuna.exceptions.TrialPruned()
-                    step_hpo = step_hpo + 1
+            # check pruning for HPO
+            if HPO:
+                trial.report(hmean_total, step=index_split * epochs + ep)
+                if trial.should_prune() or np.isnan(loss_smote_attribute_total):
+                    raise optuna.exceptions.TrialPruned()
+                step_hpo = step_hpo + 1
 
         if HPO:
             return hmean_total
@@ -578,7 +543,6 @@ class AnomalyDetection(ModelDataPrepraration):
         api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ==",
         k_smote: int = 5,
         batch_size: int = 8,
-        num_iterations: int = 100,
         lora: bool = False,
         r: int = 8,
         lora_alpha: int = 8,
@@ -591,7 +555,6 @@ class AnomalyDetection(ModelDataPrepraration):
         scheduler_type: str = "linear_restarts",
         step_warmup: int = 8,
         min_lr: float = None,
-        step_accumulation: int = 8,
         k_neighbors: int = 2,
         HPO: bool = False,
         trial: optuna.trial.Trial = None,
@@ -614,7 +577,6 @@ class AnomalyDetection(ModelDataPrepraration):
                 api_token=api_token,
                 k_smote=k_smote,
                 batch_size=batch_size,
-                num_iterations=num_iterations,
                 lora=lora,
                 r=r,
                 lora_alpha=lora_alpha,
@@ -627,7 +589,6 @@ class AnomalyDetection(ModelDataPrepraration):
                 scheduler_type=scheduler_type,
                 step_warmup=step_warmup,
                 min_lr=min_lr,
-                step_accumulation=step_accumulation,
                 k_neighbors=k_neighbors,
                 HPO=HPO,
                 trial=trial,
@@ -705,7 +666,7 @@ class AnomalyDetection(ModelDataPrepraration):
 
         return fig
 
-    def decision_knn_1(
+    def decision_knn(
         self,
         k_neighbors,
         embedding_train_array,
@@ -768,138 +729,6 @@ class AnomalyDetection(ModelDataPrepraration):
             print(i)
 
         return decision_anomaly_score_test, knn, scaler
-
-    def decision_knn(
-        self,
-        k_neighbors,
-        embedding_train_array,
-        embedding_test_array,
-        y_pred_train_array,
-        y_pred_test_array,
-        y_true_test_array,
-    ):
-        """
-        use knn to make decision if timeseries in test data normal or anomaly
-        """
-
-        # list to save z score scaler and pretrained knn
-        knn_train = []
-        threshold_train = []
-        scaler_train = []
-
-        # train each knn based on the predicted y_pred_train
-        for label in range(self.num_classes_attribute()):
-
-            # print("label", label)
-            # get the indices of each label from embedding and y pred
-            indices_train = np.where(y_pred_train_array == label)[0]
-            # print("indices_train:", indices_train)
-
-            # data and fít knn
-            embedding_train_fit_knn = embedding_train_array[indices_train]
-            knn = NearestNeighbors(n_neighbors=k_neighbors, metric="cosine")
-            knn.fit(embedding_train_fit_knn)
-
-            # calculate distance
-            distance_train, _ = knn.kneighbors(embedding_train_fit_knn)
-            distance_train = np.mean(distance_train[:, 1:], axis=1)
-            # print("distance_train:", distance_train)
-
-            # normalize the distance train in range 0 and 1
-            scaler = StandardScaler()
-            scaler.fit(distance_train.reshape(-1, 1))
-            distance_train = scaler.transform(distance_train.reshape(-1, 1)).reshape(
-                len(distance_train),
-            )
-            # print("distance_train_normalize", distance_train)
-            # print("distance_train_normalize max", max(distance_train))
-            # print("distance_train_normalize min", min(distance_train))
-
-            # calculate the threshold using percentile
-            threshold = 3
-            # print("threshold:", threshold)
-
-            # save to list
-            knn_train.append(knn)
-            threshold_train.append(threshold)
-            scaler_train.append(scaler)
-
-            # print()
-
-        decision_anomaly_score_test = []
-
-        # loop through each id in test data
-        for id in self.id_timeseries_analysis(keys="test"):
-
-            # find the index of each id and their predict and embedding
-            index_id_test = np.where(y_true_test_array[:, 0] == id)[0]
-            # print("id", id)
-            # print("index_id_test:", index_id_test)
-            embedding_test_fit_knn = embedding_test_array[index_id_test]
-            label_pred = int(y_pred_test_array[index_id_test][0])
-            # print("label_pred:", label_pred)
-
-            # use knn, scaler and threshold from label pred
-            knn = knn_train[label_pred]
-            scaler = scaler_train[label_pred]
-            threshold = threshold_train[label_pred]
-            # print("threshold:", threshold)
-            # threshold = 1
-
-            # find the distance test of embedding test with correspond pred label
-            distance_test, _ = knn.kneighbors(embedding_test_fit_knn)
-            # print("distance_test:", distance_test)
-
-            # elminate the max value in each row, only consider the distance to k_neighbors-1 neighbor (same as in training)
-            max_indices_distance_test = np.argmax(distance_test, axis=1)
-            distance_test = np.array(
-                [
-                    np.delete(row, max_idx)
-                    for row, max_idx in zip(distance_test, max_indices_distance_test)
-                ]
-            )
-            # print("distance_test_delete:", distance_test)
-            distance_test = np.mean(distance_test, axis=1)
-            # print("distance_test_mean:", distance_test)
-
-            # normalize as anomaly score and compare with the threshold the make the decision
-            distance_test = scaler.transform(distance_test.reshape(-1, 1)).reshape(
-                len(distance_test),
-            )
-            distance_test = distance_test[0]
-            # print("distance_test:", distance_test)
-            decision = 0 if distance_test < threshold else 1
-            # print("decision:", decision)
-
-            # append to list
-            decision_anomaly_score_test.append([id, decision, distance_test])
-            # print(
-            #     "[id, decision, distance_test, threshold]",
-            #     [id, decision, distance_test, threshold],
-            # )
-            # print()
-
-        print("decision_anomaly_score_test:", decision_anomaly_score_test)
-        print()
-
-        # convert decision anomaly score test to array
-        decision_anomaly_score_test = np.array(decision_anomaly_score_test)
-
-        return decision_anomaly_score_test, knn_train, scaler_train
-
-    def true_test_condition_array(self):
-        """
-        y_true_test_condition shape (id, condition_true)
-        """
-        # y_true_test_condition_array shape (id, condition_true)
-        y_true_test_condition = self.timeseries_information()["Condition"].to_numpy()
-        y_true_test_condition_array = np.array(
-            [
-                [id, y_true_test_condition[id]]
-                for id in self.id_timeseries_analysis(keys="test")
-            ]
-        )
-        return y_true_test_condition_array
 
     def accuracy_decision(self, decision_anomaly_score_test):
         """
@@ -1063,7 +892,7 @@ if __name__ == "__main__":
     api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
     k_smote: int = 5
     batch_size: int = 64
-    num_iterations: int = 1000
+    epochs: int = 10
     lora: bool = False
     r: int = 8
     lora_alpha: int = 8
@@ -1076,14 +905,13 @@ if __name__ == "__main__":
     scheduler_type: str = "linear_restarts"
     step_warmup: int = 8
     min_lr: float = None
-    step_accumulation: int = 8
     k_neighbors: int = 2
     trial: optuna.trial.Trial = None
     index_split = None
     num_train_machines: int = 5
     num_splits: int = 5
     list_machines = None
-    HPO: bool = True
+    HPO: bool = False
 
     # hyperparameters optimization
     if HPO:
@@ -1120,11 +948,11 @@ if __name__ == "__main__":
         def objective(trial: optuna.trial.Trial):
 
             # tuned hyperparamters
-            num_iterations = trial.suggest_int(
-                name="num_iterations",
-                low=1000,
-                high=15000,
-                step=100,
+            epochs = trial.suggest_int(
+                name="epochs",
+                low=1,
+                high=100,
+                step=1,
             )
 
             learning_rate = trial.suggest_float(
@@ -1155,10 +983,6 @@ if __name__ == "__main__":
                 name="lora_dropout", low=0.1, high=1, step=0.1
             )
 
-            step_accumulation = trial.suggest_int(
-                name="step_accumulation", low=1, high=20, step=1
-            )
-
             k_neighbors = trial.suggest_int(name="k_neighbors", low=2, high=128, step=1)
 
             # mean for cv
@@ -1167,7 +991,7 @@ if __name__ == "__main__":
                 api_token=api_token,
                 k_smote=k_smote,
                 batch_size=batch_size,
-                num_iterations=num_iterations,
+                epochs=epochs,
                 lora=lora,
                 r=r,
                 lora_alpha=lora_alpha,
@@ -1180,7 +1004,6 @@ if __name__ == "__main__":
                 scheduler_type=scheduler_type,
                 step_warmup=step_warmup,
                 min_lr=min_lr,
-                step_accumulation=step_accumulation,
                 k_neighbors=k_neighbors,
                 HPO=HPO,
                 trial=trial,
@@ -1262,11 +1085,10 @@ if __name__ == "__main__":
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             batch_size=batch_size,
-            num_iterations=num_iterations,
+            epochs=epochs,
             loss_type=loss_type,
             learning_rate=learning_rate,
             step_warmup=step_warmup,
-            step_accumulation=step_accumulation,
             k_neighbors=k_neighbors,
             scheduler_type=scheduler_type,
             min_lr=min_lr,
