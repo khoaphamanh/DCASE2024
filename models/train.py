@@ -34,6 +34,7 @@ class AnomalyDetection(ModelDataPrepraration):
         api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ==",
         k_smote: int = 5,
         batch_size: int = 8,
+        len_factor: float = 0.1,
         epochs: int = 100,
         lora: bool = False,
         r: int = 8,
@@ -93,9 +94,18 @@ class AnomalyDetection(ModelDataPrepraration):
         num_classes = self.num_classes_attribute()
 
         # dataloader
+        # print("dataset_Smote")
+        # for X, y in dataset_smote:
+        #     print(y)
         dataloader_smote_attribute = self.data_loader(
-            dataset=dataset_smote, batch_size=batch_size
+            dataset=dataset_smote,
+            batch_size=batch_size,
+            len_factor=len_factor,
+            uniform_sampling=True,
         )
+        # print("dataloader_Smote")
+        # for X, y in dataloader_smote_attribute:
+        #     print(y)
         dataloader_train_attribute = self.data_loader(
             dataset=dataset_train_attribute, batch_size=batch_size
         )
@@ -113,19 +123,21 @@ class AnomalyDetection(ModelDataPrepraration):
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
         )
+        if emb_size == None:
+            emb_size = model.embedding_asp
 
         # model to device
         if self.n_gpus > 1:
             model = nn.DataParallel(model, device_ids=list(range(self.n_gpus)), dim=0)
         model = model.to(self.device)
+
+        # number trainable parameters
         num_params = sum(p.numel() for p in model.parameters())
         num_params_trainable = sum(
             p.numel() for p in model.parameters() if p.requires_grad
         )
 
         # loss
-        if emb_size == None:
-            emb_size = model.embedding_asp
         loss = self.load_loss(
             loss_type=loss_type,
             num_classes=num_classes,
@@ -148,6 +160,8 @@ class AnomalyDetection(ModelDataPrepraration):
 
         # save the hyperparameters and configuration
         name_saved_model = self.name_saved_model()
+        num_instances_smote = int(len(dataset_smote) * len_factor)
+        print("num_instances_smote:", num_instances_smote)
         hyperparameters = self.hyperparameters_configuration_dict(
             k_smote=k_smote,
             lora=lora,
@@ -156,6 +170,8 @@ class AnomalyDetection(ModelDataPrepraration):
             lora_dropout=lora_dropout,
             batch_size=batch_size,
             epochs=epochs,
+            len_factor=len_factor,
+            num_instances_smote=num_instances_smote,
             loss_type=loss_type,
             learning_rate=learning_rate,
             step_warmup=step_warmup,
@@ -241,124 +257,45 @@ class AnomalyDetection(ModelDataPrepraration):
         """
 
         # get the hyperparameters
-        batch_size = hyperparameters["batch_size"]
-        emb_size = hyperparameters["emb_size"]
         k_neighbors = hyperparameters["k_neighbors"]
         epochs = hyperparameters["epochs"]
         list_machines = hyperparameters["list_machines"]
         HPO = hyperparameters["HPO"]
-        emb_size = hyperparameters["emb_size"]
-        num_instances_smote = dataloader_smote_attribute.dataset.tensors[0].shape[0]
-        print("num_instances_smote:", num_instances_smote)
 
         # trials for hpo
         if HPO:
             trial = hyperparameters["trial"]
             index_split = hyperparameters["index_split"]
 
+        # type_labels
+        type_labels_train = ["train_source_normal", "train_target_normal"]
+        type_labels_test = [
+            "test_source_normal",
+            "test_target_normal",
+            "test_source_anomaly",
+            "test_target_anomaly",
+        ]
+        type_labels_smote_knn = ["smote_attribute"]
+
         for ep in range(epochs):
 
-            # loss train
-            loss_smote_attribute_total = 0
-
-            # saved array
-            embedding_smote_attribute_array = np.empty(
-                shape=(num_instances_smote, emb_size)
+            # training mode for data smote
+            (
+                accuracy_smote_dict,
+                embedding_smote_array,
+                y_true_smote_array,
+                y_pred_label_smote_array,
+                loss_smote_attribute_total,
+            ) = self.iteration_loop(
+                run=run,
+                ep=ep,
+                model=model,
+                loss=loss,
+                dataloader_attribute=dataloader_smote_attribute,
+                optimizer=optimizer,
+                hyperparameters=hyperparameters,
+                type_labels=type_labels_smote_knn,
             )
-            print(
-                "embedding_smote_attribute_array shape:",
-                embedding_smote_attribute_array.shape,
-            )
-            y_pred_label_smote_attribute_array = np.empty(shape=(num_instances_smote,))
-            y_true_label_smote_attribute_array = np.empty(shape=(num_instances_smote,))
-
-            for iter_smote_attribute, (
-                X_smote_attribute,
-                y_smote_attribue,
-            ) in enumerate(dataloader_smote_attribute):
-
-                print("iter_smote_attribute", iter_smote_attribute)
-
-                # model in traning model
-                model.train()
-                loss.train()
-
-                # data to device
-                X_smote_attribute = X_smote_attribute.to(self.device)
-                y_smote_attribue = y_smote_attribue.to(self.device)
-
-                # forward pass
-                embedding_smote_attribute = model(X_smote_attribute)
-
-                # calculate the loss
-                loss_smote_attribute = loss(embedding_smote_attribute, y_smote_attribue)
-                loss_smote_attribute_total = (
-                    loss_smote_attribute_total + loss_smote_attribute.item()
-                )
-
-                # update the loss
-                loss_smote_attribute.backward()
-
-                # save to array
-                embedding_smote_attribute_array[
-                    iter_smote_attribute
-                    * batch_size : iter_smote_attribute
-                    * batch_size
-                    + batch_size
-                ] = (embedding_smote_attribute.detach().cpu().numpy())
-
-                y_true_label_smote_attribute_array[
-                    iter_smote_attribute
-                    * batch_size : iter_smote_attribute
-                    * batch_size
-                    + batch_size
-                ] = y_smote_attribue.cpu().numpy()
-
-                y_pred_smote_uniform = loss.pred_labels(
-                    embedding=embedding_smote_attribute, y_true=y_smote_attribue
-                )
-                y_pred_label_smote_attribute_array[
-                    iter_smote_attribute
-                    * batch_size : iter_smote_attribute
-                    * batch_size
-                    + batch_size
-                ] = y_pred_smote_uniform.cpu().numpy()
-
-                # update weights with optimizer
-                optimizer.step()
-                optimizer.zero_grad()
-
-            # report loss and accuracy
-            loss_smote_attribute_total = loss_smote_attribute_total / len(
-                dataloader_smote_attribute
-            )
-            run["smote_attribute/loss_smote"].append(
-                loss_smote_attribute_total, step=ep
-            )
-
-            accuracy_smote_attribute_total = accuracy_score(
-                y_pred=y_pred_label_smote_attribute_array,
-                y_true=y_true_label_smote_attribute_array,
-            )
-            run["smote_attribute/accuracy_smote"].append(
-                accuracy_smote_attribute_total, step=ep
-            )
-
-            # log the learning rate
-            current_lr = optimizer.param_groups[0]["lr"]
-            run["smote_uniform/current_lr"].append(current_lr, step=ep)
-
-            # update scheduler
-            scheduler.step()
-
-            # type_labels
-            type_labels_train = ["train_source_normal", "train_target_normal"]
-            type_labels_test = [
-                "test_source_normal",
-                "test_target_normal",
-                "test_source_anomaly",
-                "test_target_anomaly",
-            ]
 
             # evaluation mode for train data attribute
             if not HPO:
@@ -367,14 +304,15 @@ class AnomalyDetection(ModelDataPrepraration):
                     embedding_train_array,
                     y_true_train_array,
                     y_pred_label_train_array,
-                ) = self.evaluation_mode(
+                    _,
+                ) = self.iteration_loop(
                     run=run,
-                    iter_smote_uniform=iter_smote_attribute,
-                    batch_size=batch_size,
+                    ep=ep,
                     model=model,
                     loss=loss,
                     dataloader_attribute=dataloader_train_attribute,
-                    emb_size=emb_size,
+                    optimizer=optimizer,
+                    hyperparameters=hyperparameters,
                     type_labels=type_labels_train,
                 )
 
@@ -384,26 +322,34 @@ class AnomalyDetection(ModelDataPrepraration):
                 embedding_test_array,
                 y_true_test_array,
                 y_pred_label_test_array,
-            ) = self.evaluation_mode(
+                _,
+            ) = self.iteration_loop(
                 run=run,
-                iter_smote_uniform=iter_smote_attribute,
-                batch_size=batch_size,
+                ep=ep,
                 model=model,
                 loss=loss,
                 dataloader_attribute=dataloader_test_attribute,
-                emb_size=emb_size,
+                optimizer=optimizer,
+                hyperparameters=hyperparameters,
                 type_labels=type_labels_test,
             )
 
             # use knn to get the decision, anomaly score and knn_pretrained
             decision_anomaly_score_test, knn_train, scaler = self.decision_knn(
                 k_neighbors=k_neighbors,
-                embedding_train_array=embedding_smote_attribute_array,
+                embedding_train_array=embedding_smote_array,
                 embedding_test_array=embedding_test_array,
-                y_pred_train_array=y_pred_label_smote_attribute_array,
+                y_pred_train_array=y_pred_label_smote_array,
                 y_pred_test_array=y_pred_label_test_array,
                 y_true_test_array=y_true_test_array,
             )
+
+            # update scheduler
+            scheduler.step()
+
+            # log the learning rate
+            current_lr = optimizer.param_groups[0]["lr"]
+            run["smote_uniform/current_lr"].append(current_lr, step=ep)
 
             # accuracy decision
             if not HPO:
@@ -411,9 +357,7 @@ class AnomalyDetection(ModelDataPrepraration):
                     decision_anomaly_score_test=decision_anomaly_score_test
                 )
                 for typ_l, acc in zip(type_labels_test, accuracy_decisions):
-                    run["{}/accuracy_{}".format("decision", typ_l)].append(
-                        acc, step=iter_smote_attribute
-                    )
+                    run["{}/accuracy_{}".format("decision", typ_l)].append(acc, step=ep)
 
             # anomaly score and hmean
             hmean_img, hmean_total = self.auc_pauc_hmean(
@@ -422,8 +366,8 @@ class AnomalyDetection(ModelDataPrepraration):
                 y_true_test_array=y_true_test_array,
             )
 
-            run["score/hmean"].append(hmean_total, step=iter_smote_attribute)
-            run["score/auc_pauc_hmean"].append(hmean_img, step=iter_smote_attribute)
+            run["score/hmean"].append(hmean_total, step=ep)
+            run["score/auc_pauc_hmean"].append(hmean_img, step=ep)
             plt.close()
 
             # check pruning for HPO
@@ -440,42 +384,70 @@ class AnomalyDetection(ModelDataPrepraration):
             # scaler = None
             return model, loss, optimizer, knn_train, scaler
 
-    def evaluation_mode(
+    def iteration_loop(
         self,
         run: neptune.init_run,
-        iter_smote_uniform: int,
-        batch_size: int,
+        ep: int,
         model: nn.Module,
         loss: AdaCosLoss,
         dataloader_attribute: DataLoader,
-        emb_size: int = None,
+        optimizer: torch.optim.AdamW,
+        hyperparameters: dict,
         type_labels=["train_source_normal", "train_target_normal"],
     ):
         """
         evaluation mode in training loop
         """
-        # model in evaluation and no grad mode
-        model.eval()
-        loss.eval()
+
+        # hyperparameters
+        emb_size = hyperparameters["emb_size"]
+        batch_size = hyperparameters["batch_size"]
+        num_instances_smote = hyperparameters["num_instances_smote"]
+        list_machines = hyperparameters["list_machines"]
+        print("list_machines:", list_machines)
+
+        print("num_instances_smote:", num_instances_smote)
 
         # y_true, y_pred, embedding array
         type_data = type_labels[0].split("_")[0]
-        len_dataset = dataloader_attribute.dataset.tensors[0].shape[0]
+        print("type_data:", type_data)
+        len_dataset = (
+            dataloader_attribute.dataset.tensors[0].shape[0]
+            if type_data in ["train", "test"]
+            else num_instances_smote
+        )
+        print("len_dataset:", len_dataset)
         y_pred_label_array = np.empty(shape=(len_dataset,))
+
+        # evaluation mode or no grad mode
         if type_data in ["train", "test"]:
+            # mode for evaluation
+            mode = torch.no_grad()
+            model.eval()
+            loss.eval()
             y_true_array = np.empty(shape=(len_dataset, 3))
+
         else:
+            # mode for training for smote data
+            mode = torch.enable_grad()
+            model.train()
+            loss.train()
             y_true_array = np.empty(shape=(len_dataset,))
+
+            # loss train smote
+            loss_smote_attribute_total = 0
 
         embedding_array = np.empty(shape=(len_dataset, emb_size))
 
         # evaluation mode
-        with torch.no_grad():
-            for iter_eval, (X, y) in enumerate(dataloader_attribute):
+        with mode:
+            for iter_mode, (X, y) in enumerate(dataloader_attribute):
 
                 # data to device
                 X = X.to(self.device)
-
+                print("X len:", len(X))
+                print("iter_mode", iter_mode)
+                print("y", y)
                 # forward pass
                 embedding = model(X)
 
@@ -484,58 +456,84 @@ class AnomalyDetection(ModelDataPrepraration):
                     y.clone()[:, 1] if type_data in ["train", "test"] else y.clone()
                 )
                 y_true_label = y_true_label.to(self.device)
+                print("y_true_label:", y_true_label)
                 y_pred_label = loss.pred_labels(
                     embedding=embedding, y_true=y_true_label
                 )
 
                 # save to array
                 embedding_array[
-                    iter_eval * batch_size : iter_eval * batch_size + batch_size
-                ] = embedding.cpu().numpy()
+                    iter_mode * batch_size : iter_mode * batch_size + len(X)
+                ] = (embedding.detach().cpu().numpy())
                 y_true_array[
-                    iter_eval * batch_size : iter_eval * batch_size + batch_size
+                    iter_mode * batch_size : iter_mode * batch_size + len(X)
                 ] = y.cpu().numpy()
                 y_pred_label_array[
-                    iter_eval * batch_size : iter_eval * batch_size + batch_size
+                    iter_mode * batch_size : iter_mode * batch_size + len(X)
                 ] = y_pred_label.cpu().numpy()
 
-            # calculate accuracy for train and test data
+                # calculate loss for training mode for smote data
+                if type_data == "smote":
+                    loss_smote_attribute = loss(embedding, y_true_label)
+                    loss_smote_attribute_total = (
+                        loss_smote_attribute_total + loss_smote_attribute.item()
+                    )
+
+                    # calculate gradient
+                    loss_smote_attribute.backward()
+
+                    # update weights with optimizer
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+            # calculate accuracy, confusion matrix for train and test data
             if type_data in ["train", "test"]:
                 accuracy_type_labels = self.accuracy_attribute(
                     y_true_array=y_true_array,
                     y_pred_label_array=y_pred_label_array,
                     type_labels=type_labels,
                 )
+                cm = confusion_matrix(
+                    y_true=y_true_array[:, 1], y_pred=y_pred_label_array
+                )
+                # for ignoring error
+                loss_smote_attribute_total = None
 
-            # calculate accuracy for train data smote
+            # calculate loss smote total, accuracy, confusion matrix for data smote
             else:
                 accuracy_type_labels = [
                     accuracy_score(y_true=y_true_array, y_pred=y_pred_label_array)
                 ]
 
-            # calculate confusion matrix
-            if type_data in ["train", "test"]:
-                cm = confusion_matrix(
-                    y_true=y_true_array[:, 1], y_pred=y_pred_label_array
-                )
-            else:
                 cm = confusion_matrix(y_true=y_true_array, y_pred=y_pred_label_array)
-            cm_img = self.plot_confusion_matrix(cm=cm, type_data=type_data)
+
+                loss_smote_attribute_total = loss_smote_attribute_total / len(
+                    dataloader_attribute
+                )
+                run["{}/loss_smote_attribute".format(type_data)].append(
+                    loss_smote_attribute_total, step=ep
+                )
+
+            cm_img = self.plot_confusion_matrix(
+                cm=cm, list_machines=list_machines, type_data=type_data
+            )
 
             # save metrics in run
             accuracy_dict = {}
             for typ_l, acc in zip(type_labels, accuracy_type_labels):
-                run["{}/accuracy_{}".format(type_data, typ_l)].append(
-                    acc, step=iter_smote_uniform
-                )
+                run["{}/accuracy_{}".format(type_data, typ_l)].append(acc, step=ep)
                 accuracy_dict[typ_l] = acc
 
-            run["{}/confusion_matrix".format(type_data)].append(
-                cm_img, step=iter_smote_uniform
-            )
+            run["{}/confusion_matrix".format(type_data)].append(cm_img, step=ep)
             plt.close()
 
-        return accuracy_dict, embedding_array, y_true_array, y_pred_label_array
+        return (
+            accuracy_dict,
+            embedding_array,
+            y_true_array,
+            y_pred_label_array,
+            loss_smote_attribute_total,
+        )
 
     def cross_validation(
         self,
@@ -543,6 +541,7 @@ class AnomalyDetection(ModelDataPrepraration):
         api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ==",
         k_smote: int = 5,
         batch_size: int = 8,
+        len_factor: float = 0.5,
         lora: bool = False,
         r: int = 8,
         lora_alpha: int = 8,
@@ -577,6 +576,8 @@ class AnomalyDetection(ModelDataPrepraration):
                 api_token=api_token,
                 k_smote=k_smote,
                 batch_size=batch_size,
+                len_factor=len_factor,
+                epochs=epochs,
                 lora=lora,
                 r=r,
                 lora_alpha=lora_alpha,
@@ -653,12 +654,26 @@ class AnomalyDetection(ModelDataPrepraration):
 
         return indices
 
-    def plot_confusion_matrix(self, cm, type_data="train"):
+    def plot_confusion_matrix(self, cm, list_machines, type_data="train"):
         """
         plot the confusion matrix
         """
+        # get the labels number
+        if list_machines == None:
+            list_machines = self.machines
+        labels_number = self.label_machine(list_machines=list_machines)
+
+        # plot the confusion matrix
         fig = plt.figure(figsize=(35, 16))
-        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False)
+        sns.heatmap(
+            cm,
+            annot=True,
+            fmt="d",
+            cmap="Blues",
+            cbar=False,
+            xticklabels=labels_number,
+            yticklabels=labels_number,
+        )
         titel = "Confusion Matrix {}".format(type_data)
         plt.title(titel, fontsize=18)
         plt.xlabel("Predicted Labels", fontsize=15)
@@ -729,6 +744,20 @@ class AnomalyDetection(ModelDataPrepraration):
             print(i)
 
         return decision_anomaly_score_test, knn, scaler
+
+    def true_test_condition_array(self):
+        """
+        y_true_test_condition shape (id, condition_true)
+        """
+        # y_true_test_condition_array shape (id, condition_true)
+        y_true_test_condition = self.timeseries_information()["Condition"].to_numpy()
+        y_true_test_condition_array = np.array(
+            [
+                [id, y_true_test_condition[id]]
+                for id in self.id_timeseries_analysis(keys="test")
+            ]
+        )
+        return y_true_test_condition_array
 
     def accuracy_decision(self, decision_anomaly_score_test):
         """
@@ -892,7 +921,8 @@ if __name__ == "__main__":
     api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
     k_smote: int = 5
     batch_size: int = 64
-    epochs: int = 10
+    len_factor: float = 0.1
+    epochs: int = 50
     lora: bool = False
     r: int = 8
     lora_alpha: int = 8
@@ -1084,6 +1114,7 @@ if __name__ == "__main__":
             r=r,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
+            len_factor=len_factor,
             batch_size=batch_size,
             epochs=epochs,
             loss_type=loss_type,
