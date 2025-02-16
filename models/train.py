@@ -161,6 +161,8 @@ class AnomalyDetection(ModelDataPrepraration):
         # save the hyperparameters and configuration
         name_saved_model = self.name_saved_model()
         num_instances_smote = int(len(dataset_smote) * len_factor)
+        if num_instances_smote % batch_size == 1:
+            num_instances_smote = num_instances_smote + 1
         print("num_instances_smote:", num_instances_smote)
         hyperparameters = self.hyperparameters_configuration_dict(
             k_smote=k_smote,
@@ -171,6 +173,7 @@ class AnomalyDetection(ModelDataPrepraration):
             batch_size=batch_size,
             epochs=epochs,
             len_factor=len_factor,
+            list_machines=list_machines,
             num_instances_smote=num_instances_smote,
             loss_type=loss_type,
             learning_rate=learning_rate,
@@ -187,7 +190,6 @@ class AnomalyDetection(ModelDataPrepraration):
             index_split=index_split,
             num_train_machines=num_train_machines,
             num_splits=num_splits,
-            list_machines=list_machines,
         )
         run["hyperparameters"] = hyperparameters
 
@@ -375,7 +377,6 @@ class AnomalyDetection(ModelDataPrepraration):
                 trial.report(hmean_total, step=index_split * epochs + ep)
                 if trial.should_prune() or np.isnan(loss_smote_attribute_total):
                     raise optuna.exceptions.TrialPruned()
-                step_hpo = step_hpo + 1
 
         if HPO:
             return hmean_total
@@ -514,9 +515,7 @@ class AnomalyDetection(ModelDataPrepraration):
                     loss_smote_attribute_total, step=ep
                 )
 
-            cm_img = self.plot_confusion_matrix(
-                cm=cm, list_machines=list_machines, type_data=type_data
-            )
+            cm_img = self.plot_confusion_matrix(cm=cm, type_data=type_data)
 
             # save metrics in run
             accuracy_dict = {}
@@ -541,6 +540,7 @@ class AnomalyDetection(ModelDataPrepraration):
         api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ==",
         k_smote: int = 5,
         batch_size: int = 8,
+        epochs: int = 50,
         len_factor: float = 0.5,
         lora: bool = False,
         r: int = 8,
@@ -654,26 +654,13 @@ class AnomalyDetection(ModelDataPrepraration):
 
         return indices
 
-    def plot_confusion_matrix(self, cm, list_machines, type_data="train"):
+    def plot_confusion_matrix(self, cm, type_data="train"):
         """
         plot the confusion matrix
         """
-        # get the labels number
-        if list_machines == None:
-            list_machines = self.machines
-        labels_number = self.label_machine(list_machines=list_machines)
-
         # plot the confusion matrix
         fig = plt.figure(figsize=(35, 16))
-        sns.heatmap(
-            cm,
-            annot=True,
-            fmt="d",
-            cmap="Blues",
-            cbar=False,
-            xticklabels=labels_number,
-            yticklabels=labels_number,
-        )
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False)
         titel = "Confusion Matrix {}".format(type_data)
         plt.title(titel, fontsize=18)
         plt.xlabel("Predicted Labels", fontsize=15)
@@ -941,7 +928,7 @@ if __name__ == "__main__":
     num_train_machines: int = 5
     num_splits: int = 5
     list_machines = None
-    HPO: bool = False
+    HPO: bool = True
 
     # hyperparameters optimization
     if HPO:
@@ -973,16 +960,14 @@ if __name__ == "__main__":
         batch_size = 64
         num_train_machines = 5
         num_splits = 5
+        epochs = 50
 
         # objective functions
         def objective(trial: optuna.trial.Trial):
 
             # tuned hyperparamters
-            epochs = trial.suggest_int(
-                name="epochs",
-                low=1,
-                high=100,
-                step=1,
+            len_factor = trial.suggest_float(
+                name="len_factor", low=0.01, high=0.7, log=True
             )
 
             learning_rate = trial.suggest_float(
@@ -1013,7 +998,7 @@ if __name__ == "__main__":
                 name="lora_dropout", low=0.1, high=1, step=0.1
             )
 
-            k_neighbors = trial.suggest_int(name="k_neighbors", low=2, high=128, step=1)
+            k_neighbors = trial.suggest_int(name="k_neighbors", low=2, high=32, step=1)
 
             # mean for cv
             hmean_cv = ad.cross_validation(
@@ -1021,6 +1006,7 @@ if __name__ == "__main__":
                 api_token=api_token,
                 k_smote=k_smote,
                 batch_size=batch_size,
+                len_factor=len_factor,
                 epochs=epochs,
                 lora=lora,
                 r=r,

@@ -182,6 +182,10 @@ class ModelDataPrepraration(DataPreprocessing):
             # total number of instances
             num_instances = int(len_factor * len(dataset))
 
+            # check if a last batch has one instance (avoid error for batchnorm in model)
+            if num_instances % batch_size == 1:
+                num_instances = num_instances + 1
+
             # split to get the label
             _, y_train_smote = dataset.tensors
 
