@@ -704,9 +704,9 @@ if __name__ == "__main__":
     # num_classes_attribute = data_preprocessing.num_classes_attribute()
     # print("num_classes_attribute:", num_classes_attribute)
 
-    train_data_smote, train_label_smote = data_preprocessing.smote()
-    print("train_data_smote shape:", train_data_smote.shape)
-    print("train_label_smote:", train_label_smote.shape)
+    # train_data_smote, train_label_smote = data_preprocessing.smote()
+    # print("train_data_smote shape:", train_data_smote.shape)
+    # print("train_label_smote:", train_label_smote.shape)
 
     # label_train_attribute_unique, label_train_attribute_counts = np.unique(
     #     train_label_smote, return_counts=True
@@ -752,9 +752,7 @@ if __name__ == "__main__":
     # print("out len:", len(out))
     # print("out:", out)
 
-    label_machine = data_preprocessing.label_machine(
-        list_machines=data_preprocessing.machines
-    )
+    label_machine = data_preprocessing.label_machine(list_machines=None)
     print("label_machine:", label_machine)
 
     end = default_timer()
