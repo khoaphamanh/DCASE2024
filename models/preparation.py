@@ -135,7 +135,7 @@ class ModelDataPrepraration(DataPreprocessing):
 
         return model
 
-    def load_dataset_tensor(self, k_smote=5, kind=None):
+    def load_dataset_tensor(self, k_smote=5):
         """
         load data smote and train, test data as Tensor
         """
@@ -171,26 +171,16 @@ class ModelDataPrepraration(DataPreprocessing):
             test_dataset_attribute, test_label_attribute
         )
 
-        # return data based on kind
-        if kind == "train":
-            return train_dataset_attribute
-        elif kind == "test":
-            return test_dataset_attribute
-        elif kind == "smote":
-            return dataset_smote
-        else:
-            return dataset_smote, train_dataset_attribute, test_dataset_attribute
+        return dataset_smote, train_dataset_attribute, test_dataset_attribute
 
-    def data_loader(
-        self, dataset, batch_size, num_iterations=None, uniform_sampling=False
-    ):
+    def data_loader(self, dataset, batch_size, len_factor=None, uniform_sampling=False):
         """
         convert tensor data to dataloader
         """
         # check if uniform_sampling
-        if uniform_sampling and isinstance(num_iterations, int):
+        if uniform_sampling and len_factor is not None:
             # total number of instances
-            num_instances = num_iterations * batch_size
+            num_instances = int(len_factor * len(dataset))
 
             # split to get the label
             _, y_train_smote = dataset.tensors
@@ -200,10 +190,16 @@ class ModelDataPrepraration(DataPreprocessing):
                 [(y_train_smote == l).sum() for l in torch.unique(y_train_smote)]
             )
             weight = 1.0 / class_instances_count
+            num_instances_original = len(dataset)
+
+            # instance_weight = torch.tensor([weight[l] for l in y_train_smote])
+            instance_weight = torch.tensor(
+                [weight[0] for i in range(num_instances_original)]
+            )
 
             # batch uniform sampling
             sampler = WeightedRandomSampler(
-                weights=weight,
+                weights=instance_weight,
                 num_samples=num_instances,
             )
 
@@ -378,7 +374,7 @@ class ModelDataPrepraration(DataPreprocessing):
         save the pretrained model in pretrained_model directory
         """
         # get model name
-        model_name = hyperparameters["model_name"]
+        model_name = hyperparameters["name_model"]
         path_pretrained_model_loss = os.path.join(
             self.path_pretrained_models_directory, model_name
         )
