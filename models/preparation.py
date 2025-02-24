@@ -24,6 +24,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score, roc_curve
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sklearn.metrics import accuracy_score
 
 # from ..data.preprocessing import DataPreprocessing
 
@@ -52,6 +53,9 @@ class ModelDataPrepraration(DataPreprocessing):
             self.path_pretrained_models_directory
         ) or not os.path.exists(self.path_beat_iter3_state_dict):
             import download_models
+
+        # path hpo
+        self.path_hpo_directory = os.path.join(self.path_directory_models, "HPO")
 
         # configuration of the model
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -259,15 +263,13 @@ class ModelDataPrepraration(DataPreprocessing):
         # sort X and y based on labels
         X = X[indices_labels]
         y = y[indices_labels]
-        if y.ndim != 1:
-            print("y unique:", torch.unique(y[:, 0]))
 
         # turn X and y back to Tensor Dataset
         dataset = TensorDataset(X, y)
 
         return dataset
 
-    def name_saved_model(self):
+    def name_saved_model(self, index_split=None):
         """
         get the model name to save it
         """
@@ -277,8 +279,11 @@ class ModelDataPrepraration(DataPreprocessing):
         # Format as string
         datetime_string = current_datetime.strftime("%Y_%m_%d-%H_%M_%S")
 
-        # create model_name
-        model_name = "model_{}.pth".format(datetime_string)
+        # create model_name for not HPO
+        if index_split == None:
+            model_name = "model_{}.pth".format(datetime_string)
+        else:
+            model_name = "model_checkpoint_{}".format(index_split)
 
         return model_name
 
@@ -383,23 +388,14 @@ class ModelDataPrepraration(DataPreprocessing):
         """
         save the pretrained model in pretrained_model directory
         """
-        # get model name and hpo, name model for hpo
+        # get model name for hpo and not hpo
         model_name = hyperparameters["name_model"]
         HPO = hyperparameters["HPO"]
-        index_split = hyperparameters["index_split"]
-
-        # get the path of the pretrained models
-        if not HPO and index_split == None:
-            path_pretrained_model_loss = os.path.join(
-                self.path_pretrained_models_directory, model_name
-            )
-
-        # path HPO in hpo directory
-        else:
-            model_name = f"checkpoint_{index_split}.pth"
-            path_pretrained_model_loss = os.path.join(
-                self.path_pretrained_models_directory, "hpo", model_name
-            )
+        path_pretrained_model_loss = (
+            os.path.join(self.path_pretrained_models_directory, model_name)
+            if not HPO
+            else os.path.join(self.path_hpo_directory, model_name)
+        )
 
         torch.save(
             {
@@ -483,10 +479,14 @@ class ModelDataPrepraration(DataPreprocessing):
         optimizer.load_state_dict(optimizer_state_dict)
 
         # load scheduler
+        step_warmup = hyperparameters["step_warmup"]
+        min_lr = hyperparameters["min_lr"]
         scheduler = self.load_scheduler(
-            optimizer=optimizer,
+            optimizer=optimizer, step_warmup=step_warmup, min_lr=min_lr
         )
-        return model, loss, knn, scaler, hyperparameters
+        scheduler.load_state_dict(scheduler_state_dict)
+
+        return model, loss, optimizer, scheduler, knn, scaler, hyperparameters
 
     def perform_load_data(self, k_smote, HPO, batch_size, len_factor, list_machines):
         """
@@ -680,7 +680,7 @@ class ModelDataPrepraration(DataPreprocessing):
         distance_train, _ = knn.kneighbors(embedding_train_array)
         distance_train = np.mean(distance_train[:, 1:], axis=1)
         # distance_train = np.mean(distance_train, axis=1)
-        print("distance_train shape:", distance_train.shape)
+        # print("distance_train shape:", distance_train.shape)
 
         # normalize the distances
         scaler = StandardScaler()
@@ -710,7 +710,7 @@ class ModelDataPrepraration(DataPreprocessing):
             len(distance_test),
         )
         # distance_test = distance_test[0]
-        print("distance_test:", distance_test)
+        # print("distance_test:", distance_test)
         decision_anomaly_score_test[:, 2] = distance_test
 
         # get the decision
@@ -719,8 +719,6 @@ class ModelDataPrepraration(DataPreprocessing):
 
         # decision_anomaly_score_test = np.array(decision_anomaly_score_test)
         # print("decision_anomaly_score_test:", decision_anomaly_score_test)
-        for i in decision_anomaly_score_test:
-            print(i)
 
         return decision_anomaly_score_test, knn, scaler
 
