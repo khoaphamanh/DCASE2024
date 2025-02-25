@@ -3,7 +3,7 @@ from torch import nn
 from beats.beats_custom import BEATsCustom
 import os
 import numpy as np
-from loss import AdaCosLoss, ArcFaceLoss
+from loss import AdaCosLoss
 from sklearn.metrics import confusion_matrix, accuracy_score
 from torch.utils.data import DataLoader
 import neptune
@@ -98,7 +98,7 @@ class AnomalyDetection(ModelDataPrepraration):
         )
 
         # save the hyperparameters and configuration
-        name_saved_model = self.name_saved_model()
+        name_saved_model = self.name_saved_model(index_split=index_split)
 
         # hyperparameters dict and and configuration dict
         hyperparameters = self.hyperparameters_configuration_dict(
@@ -154,6 +154,7 @@ class AnomalyDetection(ModelDataPrepraration):
                 optimizer=optimizer,
                 scheduler=scheduler,
                 hyperparameters=hyperparameters,
+                configuration=configuration,
             )
 
         # return for not HPO
@@ -201,7 +202,7 @@ class AnomalyDetection(ModelDataPrepraration):
         """
         main function to find the result
         """
-        # init neptune for case not HPO and first ep_hpo
+        # init neptune run
         run = neptune.init_run(project=project, api_token=api_token)
 
         # load data, loss, optimizer and model
@@ -409,6 +410,7 @@ class AnomalyDetection(ModelDataPrepraration):
                 y_true_test_array=y_true_test_array,
             )
 
+            # log the hmean image
             run["score/hmean"].append(hmean_total, step=ep)
             run["score/auc_pauc_hmean"].append(hmean_img, step=ep)
             plt.close()
@@ -447,19 +449,15 @@ class AnomalyDetection(ModelDataPrepraration):
         batch_size = hyperparameters["batch_size"]
         num_instances_smote = hyperparameters["num_instances_smote"]
         list_machines = hyperparameters["list_machines"]
-        print("list_machines:", list_machines)
-
-        print("num_instances_smote:", num_instances_smote)
 
         # y_true, y_pred, embedding array
         type_data = type_labels[0].split("_")[0]
-        print("type_data:", type_data)
         len_dataset = (
             dataloader_attribute.dataset.tensors[0].shape[0]
             if type_data in ["train", "test"]
             else num_instances_smote
         )
-        print("len_dataset:", len_dataset)
+
         y_pred_label_array = np.empty(shape=(len_dataset,))
 
         # evaluation mode or no grad mode
@@ -488,9 +486,7 @@ class AnomalyDetection(ModelDataPrepraration):
 
                 # data to device
                 X = X.to(self.device)
-                print("X len:", len(X))
-                print("iter_mode", iter_mode)
-                print("y", y)
+
                 # forward pass
                 embedding = model(X)
 
@@ -499,7 +495,6 @@ class AnomalyDetection(ModelDataPrepraration):
                     y.clone()[:, 1] if type_data in ["train", "test"] else y.clone()
                 )
                 y_true_label = y_true_label.to(self.device)
-                print("y_true_label:", y_true_label)
                 y_pred_label = loss.pred_labels(
                     embedding=embedding, y_true=y_true_label
                 )
@@ -576,10 +571,145 @@ class AnomalyDetection(ModelDataPrepraration):
             loss_smote_attribute_total,
         )
 
-    def hmean_calculation_one_epoch_hpo(self, index_split, shared_):
+    def hmean_calculation_one_epoch_hpo(
+        self,
+        run: neptune.init_run,
+        number_trial: int,
+        ep: int,
+        index_split: int,
+        list_machines: list,
+        k_neighbors: int,
+        dict_data_shared: dict = None,
+        list_shared_hmean: list = None,
+    ):
         """
         calcualate hmean for one epoch
         """
+        # load data for this split
+        dataloader_smote_attribute = dict_data_shared[index_split]["smote"]
+        dataloader_test_attribute = dict_data_shared[index_split]["test"]
+
+        # load model, loss, optimizer, scheduler, hyperparameters for this split
+        pretrained_path = os.path.join(
+            self.path_hpo_directory, self.name_saved_model(index_split=index_split)
+        )
+        model, loss, optimizer, scheduler, hyperparameters, configuration, _, _ = (
+            self.load_pretrained_model(pretrained_path=pretrained_path)
+        )
+
+        # log the hyperaparameters, configuration and name trial
+        if ep == 0:
+            name_trial = f"trial {number_trial} split {index_split}"
+            run["name_trial"] = name_trial
+            run["hyperparameters"] = hyperparameters
+            run["configuration"] = configuration
+
+        # type_labels for iteration loop
+        type_labels_test = [
+            "test_source_normal",
+            "test_target_normal",
+            "test_source_anomaly",
+            "test_target_anomaly",
+        ]
+        type_labels_smote_knn = ["smote_attribute"]
+
+        # training mode for data smote
+        (
+            accuracy_smote_dict,
+            embedding_smote_array,
+            y_true_smote_array,
+            y_pred_label_smote_array,
+            loss_smote_attribute_total,
+        ) = self.iteration_loop(
+            run=run,
+            ep=ep,
+            model=model,
+            loss=loss,
+            dataloader_attribute=dataloader_smote_attribute,
+            optimizer=optimizer,
+            hyperparameters=hyperparameters,
+            type_labels=type_labels_smote_knn,
+        )
+
+        # evaluation mode for test data attribute
+        (
+            accuracy_test_dict,
+            embedding_test_array,
+            y_true_test_array,
+            y_pred_label_test_array,
+            _,
+        ) = self.iteration_loop(
+            run=run,
+            ep=ep,
+            model=model,
+            loss=loss,
+            dataloader_attribute=dataloader_test_attribute,
+            optimizer=optimizer,
+            hyperparameters=hyperparameters,
+            type_labels=type_labels_test,
+        )
+
+        # use knn to get the decision, anomaly score and knn_pretrained
+        decision_anomaly_score_test, knn_train, scaler = self.decision_knn(
+            k_neighbors=k_neighbors,
+            embedding_train_array=embedding_smote_array,
+            embedding_test_array=embedding_test_array,
+            y_pred_train_array=y_pred_label_smote_array,
+            y_pred_test_array=y_pred_label_test_array,
+            y_true_test_array=y_true_test_array,
+        )
+
+        # update scheduler
+        scheduler.step()
+
+        # log the learning rate
+        current_lr = optimizer.param_groups[0]["lr"]
+        run["smote_uniform/current_lr"].append(current_lr, step=ep)
+
+        # anomaly score and hmean
+        hmean_img, hmean_total = self.auc_pauc_hmean(
+            decision_anomaly_score_test=decision_anomaly_score_test,
+            list_machines=list_machines,
+            y_true_test_array=y_true_test_array,
+        )
+
+        # log the hmean image
+        run["score/hmean"].append(hmean_total, step=ep)
+        run["score/auc_pauc_hmean"].append(hmean_img, step=ep)
+        plt.close()
+
+        # Save updated model and optimizer
+        self.save_pretrained_model_loss(
+            model_pretrained=model,
+            loss_pretrained=loss,
+            optimizer=optimizer,
+            hyperparameters=hyperparameters,
+            configuration=configuration,
+            scheduler=scheduler,
+            knn_pretrained=knn_train,
+            scaler_pretrained=scaler,
+        )
+
+        # save the hmean total to shared list
+        list_shared_hmean.append(hmean_total)
+
+        return run
+
+    def run_hmean_calculation_one_epoch_hpo(
+        self,
+        list_machines_combinations: list,
+    ):
+        """
+        run the function hmean_calculation_one_epoch_hpo for all splits in parallel using multiprocessing
+        """
+        processes = []
+        manager = multiprocessing.Manager()
+        list_shared_hmean = manager.list()
+
+        for index_split, list_machines in enumerate(list_machines_combinations):
+            p = multiprocessing.Process(
+                target=self.hmean_calculation_one_epoch_hpo, args=()
+            )
 
     def cross_validation(
         self,
@@ -619,41 +749,32 @@ class AnomalyDetection(ModelDataPrepraration):
 
         for index_split, list_machines in enumerate(list_machines_combinations):
 
-            # load data
-            (
-                dataloader_smote_attribute,
-                dataloader_train_attribute,
-                dataloader_test_attribute,
-            ) = self.perform_load_data(
+            self.preparation_before_training(
                 k_smote=k_smote,
                 batch_size=batch_size,
-                HPO=HPO,
-                list_machines=list_machines,
-                index_split=index_split,
-            )
-            dict_data_shared[index_split] = {
-                "smote": dataloader_smote_attribute,
-                "train": dataloader_train_attribute,
-                "test": dataloader_test_attribute,
-            }
-
-            # load model
-            input_size = (
-                dataloader_train_attribute.dataset.tensors[0].shape[1] // self.fs
-            )
-            model = self.load_model(
-                input_size=input_size,
-                emb_size=emb_size,
+                epochs=epochs,
+                len_factor=len_factor,
                 lora=lora,
                 r=r,
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
+                emb_size=emb_size,
+                loss_type=loss_type,
+                margin=margin,
+                scale=scale,
+                learning_rate=learning_rate,
+                scheduler_type=scheduler_type,
+                step_warmup=step_warmup,
+                min_lr=min_lr,
+                list_machines=list_machines,
+                k_neighbors=k_neighbors,
+                index_split=index_split,
+                HPO=HPO,
+                trial=trial,
+                num_train_machines=num_train_machines,
+                num_splits=num_splits,
+                dict_data_shared=dict_data_shared,
             )
-            if emb_size == None:
-                emb_size = model.embedding_asp
-
-            # load optimizer
-
             # load data and
         # # save the hyperparameters and configuration
         # hyperparameters = self.hyperparameters_configuration_dict(
@@ -721,12 +842,20 @@ class AnomalyDetection(ModelDataPrepraration):
         # print("hmean_list_hpo:", hmean_list_hpo)
 
         for ep in range(epochs):
+
+            # init run if epoch 0
+            if ep == 0:
+                run = neptune.init_run(project=project, api_token=api_token)
+
             hmean_test_this_epoch = self.anomaly_detection()
 
             # check for pruning
             hmean_test_this_epoch = np.mean(hmean_test_this_epoch)
             if trial.should_prune():
+                run.stop()
                 raise optuna.exceptions.TrialPruned()
+
+        run.stop()
 
         return hmean_test_this_epoch
 
