@@ -698,6 +698,11 @@ class AnomalyDetection(ModelDataPrepraration):
     def run_hmean_calculation_one_epoch_hpo(
         self,
         list_machines_combinations: list,
+        run: neptune.init_run,
+        number_trial: int,
+        ep: int,
+        k_neighbors: int,
+        dict_data_shared: dict = None,
     ):
         """
         run the function hmean_calculation_one_epoch_hpo for all splits in parallel using multiprocessing
@@ -708,8 +713,25 @@ class AnomalyDetection(ModelDataPrepraration):
 
         for index_split, list_machines in enumerate(list_machines_combinations):
             p = multiprocessing.Process(
-                target=self.hmean_calculation_one_epoch_hpo, args=()
+                target=self.hmean_calculation_one_epoch_hpo,
+                args=(
+                    run,
+                    number_trial,
+                    ep,
+                    index_split,
+                    list_machines,
+                    k_neighbors,
+                    dict_data_shared,
+                    list_shared_hmean,
+                ),
             )
+            p.start()
+            processes.append(p)
+
+        for p in processes:
+            p.join()
+
+        return list(list_shared_hmean)
 
     def cross_validation(
         self,
@@ -775,71 +797,6 @@ class AnomalyDetection(ModelDataPrepraration):
                 num_splits=num_splits,
                 dict_data_shared=dict_data_shared,
             )
-            # load data and
-        # # save the hyperparameters and configuration
-        # hyperparameters = self.hyperparameters_configuration_dict(
-        #     k_smote=k_smote,
-        #     lora=lora,
-        #     r=r,
-        #     lora_alpha=lora_alpha,
-        #     lora_dropout=lora_dropout,
-        #     batch_size=batch_size,
-        #     epochs=epochs,
-        #     len_factor=len_factor,
-        #     list_machines=list_machines,
-        #     num_instances_smote=num_instances_smote,
-        #     loss_type=loss_type,
-        #     learning_rate=learning_rate,
-        #     step_warmup=step_warmup,
-        #     k_neighbors=k_neighbors,
-        #     HPO=HPO,
-        #     emb_size=emb_size,
-        #     margin=margin,
-        #     scale=scale,
-        #     name_saved_model=name_saved_model,
-        #     input_size=input_size,
-        #     trial=trial,
-        #     trial_number=None if trial == None else trial.number,
-        #     index_split=index_split,
-        #     num_train_machines=num_train_machines,
-        #     num_splits=num_splits,
-
-        # init the model and loss
-
-        # # cross validation
-        # hmean_list_hpo = []
-        # for index_split, list_machines in enumerate(list_machines_combination):
-
-        #     # calculate the hmean split
-        #     hmean_split = self.anomaly_detection(
-        #         project=project,
-        #         api_token=api_token,
-        #         k_smote=k_smote,
-        #         batch_size=batch_size,
-        #         len_factor=len_factor,
-        #         epochs=epochs,
-        #         lora=lora,
-        #         r=r,
-        #         lora_alpha=lora_alpha,
-        #         lora_dropout=lora_dropout,
-        #         emb_size=emb_size,
-        #         loss_type=loss_type,
-        #         margin=margin,
-        #         scale=scale,
-        #         learning_rate=learning_rate,
-        #         scheduler_type=scheduler_type,
-        #         step_warmup=step_warmup,
-        #         min_lr=min_lr,
-        #         k_neighbors=k_neighbors,
-        #         HPO=HPO,
-        #         trial=trial,
-        #         index_split=index_split,
-        #         num_train_machines=num_train_machines,
-        #         num_splits=num_splits,
-        #         list_machines=list_machines,
-        #     )
-        #     hmean_list_hpo.append(hmean_split)
-        # print("hmean_list_hpo:", hmean_list_hpo)
 
         for ep in range(epochs):
 
@@ -847,7 +804,13 @@ class AnomalyDetection(ModelDataPrepraration):
             if ep == 0:
                 run = neptune.init_run(project=project, api_token=api_token)
 
-            hmean_test_this_epoch = self.anomaly_detection()
+            hmean_test_this_epoch = self.run_hmean_calculation_one_epoch_hpo(
+                list_machines_combinations=list_machines_combinations,
+                number_trial=trial.number,
+                ep=ep,
+                k_neighbors=k_neighbors,
+                dict_data_shared=dict_data_shared,
+            )
 
             # check for pruning
             hmean_test_this_epoch = np.mean(hmean_test_this_epoch)
@@ -860,229 +823,225 @@ class AnomalyDetection(ModelDataPrepraration):
         return hmean_test_this_epoch
 
 
-# # run this script
-# if __name__ == "__main__":
+# run this script
+if __name__ == "__main__":
 
-#     #  seed and data_name
-#     seed = 1998
-#     develop_name = "develop"
+    #  seed and data_name
+    seed = 1998
+    develop_name = "develop"
 
-#     # load device
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#     print("device:", device)
+    # load device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("device:", device)
 
-#     # anomaly detection
-#     ad = AnomalyDetection(data_name=develop_name, seed=seed)
+    # anomaly detection
+    ad = AnomalyDetection(data_name=develop_name, seed=seed)
 
-#     """
-#     test model anomaly detection
-#     """
-#     project = "DCASE2024/wav-test"
-#     api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
-#     k_smote: int = 5
-#     batch_size: int = 64
-#     len_factor: float = 0.1
-#     epochs: int = 50
-#     lora: bool = False
-#     r: int = 8
-#     lora_alpha: int = 8
-#     lora_dropout: float = 0.0
-#     emb_size: int = None
-#     loss_type: str = "adacos"
-#     margin: int = None
-#     scale: int = None
-#     learning_rate: float = 1e-5
-#     scheduler_type: str = "linear_restarts"
-#     step_warmup: int = 8
-#     min_lr: float = None
-#     k_neighbors: int = 2
-#     trial: optuna.trial.Trial = None
-#     index_split = None
-#     num_train_machines: int = 5
-#     num_splits: int = 5
-#     list_machines = None
-#     HPO: bool = True
+    """
+    test model anomaly detection
+    """
+    # hyperaparameter
+    project = "DCASE2024/wav-test"
+    api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
+    k_smote: int = 5
+    batch_size: int = 64
+    len_factor: float = 0.1
+    epochs: int = 50
+    lora: bool = False
+    r: int = 8
+    lora_alpha: int = 8
+    lora_dropout: float = 0.0
+    emb_size: int = None
+    loss_type: str = "adacos"
+    margin: int = None
+    scale: int = None
+    learning_rate: float = 1e-5
+    scheduler_type: str = "linear_restarts"
+    step_warmup: int = 8
+    min_lr: float = None
+    k_neighbors: int = 2
 
-#     # hyperparameters optimization
-#     if HPO:
-#         # create directory for HPO
-#         directory_hpo = "HPO"
-#         path_directory_models = ad.path_directory_models
-#         path_directory_HPO = os.path.join(path_directory_models, directory_hpo)
-#         os.makedirs(path_directory_HPO, exist_ok=True)
+    # hyperaparameter for hpo
+    trial: optuna.trial.Trial = None
+    index_split = None
+    num_train_machines: int = 5
+    num_splits: int = 5
+    list_machines = None
+    HPO: bool = True
 
-#         # data base file for hpo
-#         db_hpo = "hpo.db"
-#         path_db_hpo = os.path.join(path_directory_HPO, db_hpo)
-#         db_hpo_sqlite = "sqlite:///{}".format(path_db_hpo)
+    # hyperparameters optimization
+    if HPO:
+        # create directory for HPO
+        path_hpo_directory = ad.path_hpo_directory
+        os.makedirs(path_hpo_directory, exist_ok=True)
 
-#         # csv file for hpo
-#         csv_hpo = "hpo.csv"
-#         path_csv_hpo = os.path.join(path_directory_HPO, csv_hpo)
+        # data base file for hpo
+        db_hpo = "hpo.db"
+        path_db_hpo = os.path.join(path_hpo_directory, db_hpo)
+        db_hpo_sqlite = "sqlite:///{}".format(path_db_hpo)
 
-#         # optuna configuration
-#         sampler = optuna.samplers.TPESampler(seed=ad.seed)
-#         pruner = optuna.pruners.MedianPruner()
-#         study_name = "dcase24_hpo"
-#         n_trials_total = 100
+        # csv file for hpo
+        csv_hpo = "hpo.csv"
+        path_csv_hpo = os.path.join(path_hpo_directory, csv_hpo)
 
-#         # fix hyperparameters
-#         project = "DCASE2024/dcase-HPO1"
-#         api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
-#         k_smote = 5
-#         batch_size = 64
-#         num_train_machines = 5
-#         num_splits = 5
-#         epochs = 50
+        # optuna configuration
+        sampler = optuna.samplers.TPESampler(seed=ad.seed)
+        pruner = optuna.pruners.MedianPruner()
+        study_name = "dcase24_hpo"
+        n_trials_total = 100
 
-#         # objective functions
-#         def objective(trial: optuna.trial.Trial):
+        # fix hyperparameters
+        project = "DCASE2024/dcase-HPO1"
+        api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
+        k_smote = 5
+        batch_size = 8
+        num_train_machines = 3
+        num_splits = 2
+        epochs = 50
+        len_factor = 0.01
 
-#             # tuned hyperparamters
-#             len_factor = trial.suggest_float(
-#                 name="len_factor", low=0.01, high=0.7, log=True
-#             )
+        # objective functions
+        def objective(trial: optuna.trial.Trial):
 
-#             learning_rate = trial.suggest_float(
-#                 name="learning_rate", low=1e-7, high=1e-1, log=True
-#             )
+            # tuned hyperparamters
+            learning_rate = trial.suggest_float(
+                name="learning_rate", low=1e-7, high=1e-1, log=True
+            )
 
-#             step_warmup = trial.suggest_int(
-#                 name="step_warmup", low=2, high=500, step=10
-#             )
+            step_warmup = trial.suggest_int(name="step_warmup", low=2, high=256, step=4)
 
-#             emb_size = trial.suggest_int(name="emb_size", low=2, high=2048, step=2)
+            emb_size = trial.suggest_int(name="emb_size", low=2, high=2048, step=2)
 
-#             loss_type = trial.suggest_categorical(
-#                 name="loss_type", choices=["adacos", "arcface"]
-#             )
-#             margin = trial.suggest_float(name="margin", low=0, high=5, step=0.1)
-#             scale = trial.suggest_int(name="scale", low=2, high=256, step=2)
+            loss_type = trial.suggest_categorical(
+                name="loss_type", choices=["arcface", "adacos"]
+            )
+            margin = trial.suggest_float(name="margin", low=0, high=5, step=0.1)
+            scale = trial.suggest_int(name="scale", low=2, high=256, step=2)
 
-#             scheduler_type = trial.suggest_categorical(
-#                 name="scheduler_type", choices=["cosine_restarts", "linear_restarts"]
-#             )
-#             min_lr = trial.suggest_float(name="min_lr", low=1e-7, high=1e-1, log=True)
+            scheduler_type = trial.suggest_categorical(
+                name="scheduler_type", choices=["cosine_restarts", "linear_restarts"]
+            )
+            min_lr = trial.suggest_float(name="min_lr", low=1e-7, high=1e-1, log=True)
 
-#             lora = trial.suggest_categorical(name="lora", choices=[True, False])
-#             r = trial.suggest_int(name="r", low=8, high=256, step=2)
-#             lora_alpha = trial.suggest_int(name="lora_alpha", low=2, high=128, step=2)
-#             lora_dropout = trial.suggest_float(
-#                 name="lora_dropout", low=0.1, high=1, step=0.1
-#             )
+            lora = trial.suggest_categorical(name="lora", choices=[True, False])
+            r = trial.suggest_int(name="r", low=8, high=256, step=2)
+            lora_alpha = trial.suggest_int(name="lora_alpha", low=2, high=128, step=2)
+            lora_dropout = trial.suggest_float(
+                name="lora_dropout", low=0.1, high=1, step=0.1
+            )
 
-#             k_neighbors = trial.suggest_int(name="k_neighbors", low=2, high=32, step=1)
+            k_neighbors = trial.suggest_int(name="k_neighbors", low=2, high=32, step=1)
 
-#             # mean for cv
-#             hmean_cv = ad.cross_validation(
-#                 project=project,
-#                 api_token=api_token,
-#                 k_smote=k_smote,
-#                 batch_size=batch_size,
-#                 len_factor=len_factor,
-#                 epochs=epochs,
-#                 lora=lora,
-#                 r=r,
-#                 lora_alpha=lora_alpha,
-#                 lora_dropout=lora_dropout,
-#                 emb_size=emb_size,
-#                 loss_type=loss_type,
-#                 margin=margin,
-#                 scale=scale,
-#                 learning_rate=learning_rate,
-#                 scheduler_type=scheduler_type,
-#                 step_warmup=step_warmup,
-#                 min_lr=min_lr,
-#                 k_neighbors=k_neighbors,
-#                 HPO=HPO,
-#                 trial=trial,
-#                 num_train_machines=num_train_machines,
-#                 num_splits=num_splits,
-#             )
+            # mean for cv
+            hmean_cv = ad.cross_validation(
+                project=project,
+                api_token=api_token,
+                k_smote=k_smote,
+                batch_size=batch_size,
+                len_factor=len_factor,
+                epochs=epochs,
+                lora=lora,
+                r=r,
+                lora_alpha=lora_alpha,
+                lora_dropout=lora_dropout,
+                emb_size=emb_size,
+                loss_type=loss_type,
+                margin=margin,
+                scale=scale,
+                learning_rate=learning_rate,
+                scheduler_type=scheduler_type,
+                step_warmup=step_warmup,
+                min_lr=min_lr,
+                k_neighbors=k_neighbors,
+                HPO=HPO,
+                trial=trial,
+                num_train_machines=num_train_machines,
+                num_splits=num_splits,
+            )
 
-#             return hmean_cv
+            return hmean_cv
 
-#         # create or load a exist study
-#         study = optuna.create_study(
-#             direction="maximize",
-#             study_name=study_name,
-#             storage=db_hpo_sqlite,
-#             load_if_exists=True,
-#             sampler=sampler,
-#             pruner=pruner,
-#         )
+        # create or load a exist study
+        study = optuna.create_study(
+            direction="maximize",
+            study_name=study_name,
+            storage=db_hpo_sqlite,
+            load_if_exists=True,
+            sampler=sampler,
+            pruner=pruner,
+        )
 
-#         # Export the study trials to a pandas DataFrame
-#         df_trial = study.trials_dataframe()
+        # Export the study trials to a pandas DataFrame
+        df_trial = study.trials_dataframe()
 
-#         # Save the DataFrame to a CSV file
-#         df_trial.to_csv(path_csv_hpo, index=False)
+        # Save the DataFrame to a CSV file
+        df_trial.to_csv(path_csv_hpo, index=False)
 
-#         # run trial if not enough n_trials_total
-#         if len(study.trials) < n_trials_total:
+        # run trial if not enough n_trials_total
+        if len(study.trials) < n_trials_total:
 
-#             # reload traila if in fail or running state
-#             if len(study.trials) >= 1 and study.trials[-1].state in [
-#                 TrialState.FAIL,
-#                 TrialState.RUNNING,
-#             ]:
-#                 failed_trial_params = study.trials[-1].params
-#                 study.enqueue_trial(failed_trial_params)
+            # reload traila if in fail or running state
+            if len(study.trials) >= 1 and study.trials[-1].state in [
+                TrialState.FAIL,
+                TrialState.RUNNING,
+            ]:
+                failed_trial_params = study.trials[-1].params
+                study.enqueue_trial(failed_trial_params)
 
-#             # perform HPO
-#             study.optimize(objective, n_trials=n_trials_total)
+            # perform HPO
+            study.optimize(objective, n_trials=n_trials_total)
 
-#         else:
-#             pruned_trials = study.get_trials(
-#                 deepcopy=False, states=[optuna.trial.TrialState.PRUNED]
-#             )
-#             complete_trials = study.get_trials(
-#                 deepcopy=False, states=[optuna.trial.TrialState.COMPLETE]
-#             )
-#             print("Study statistics: ")
-#             print("  Number of finished trials: ", len(study.trials))
-#             print("  Number of pruned trials: ", len(pruned_trials))
-#             print("  Number of complete trials: ", len(complete_trials))
+        else:
+            pruned_trials = study.get_trials(
+                deepcopy=False, states=[optuna.trial.TrialState.PRUNED]
+            )
+            complete_trials = study.get_trials(
+                deepcopy=False, states=[optuna.trial.TrialState.COMPLETE]
+            )
+            print("Study statistics: ")
+            print("  Number of finished trials: ", len(study.trials))
+            print("  Number of pruned trials: ", len(pruned_trials))
+            print("  Number of complete trials: ", len(complete_trials))
 
-#             best_trial_score = study.best_trial
-#             best_trial_params = best_trial_score.params
+            best_trial_score = study.best_trial
+            best_trial_params = best_trial_score.params
 
-#             print("  Value: ", best_trial_score.value)
+            print("  Value: ", best_trial_score.value)
 
-#             print("  Params: ")
-#             for key, value in best_trial_params.items():
-#                 print("    {}: {}".format(key, value))
+            print("  Params: ")
+            for key, value in best_trial_params.items():
+                print("    {}: {}".format(key, value))
 
-#             # apply the best hyperparamters for final test
-#             ad.anomaly_detection(
-#                 project=project,
-#                 api_token=api_token,
-#                 k_smote=k_smote,
-#                 batch_size=batch_size,
-#                 num_train_machines=num_train_machines,
-#                 num_splits=num_splits,
-#                 **best_trial_params,
-#             )
+            # apply the best hyperparamters for final test
+            ad.anomaly_detection(
+                project=project,
+                api_token=api_token,
+                k_smote=k_smote,
+                batch_size=batch_size,
+                num_train_machines=num_train_machines,
+                num_splits=num_splits,
+                **best_trial_params,
+            )
 
-#     else:
-#         ad.anomaly_detection(
-#             project=project,
-#             api_token=api_token,
-#             k_smote=k_smote,
-#             lora=lora,
-#             r=r,
-#             lora_alpha=lora_alpha,
-#             lora_dropout=lora_dropout,
-#             len_factor=len_factor,
-#             batch_size=batch_size,
-#             epochs=epochs,
-#             loss_type=loss_type,
-#             learning_rate=learning_rate,
-#             step_warmup=step_warmup,
-#             k_neighbors=k_neighbors,
-#             scheduler_type=scheduler_type,
-#             min_lr=min_lr,
-#             margin=margin,
-#             scale=scale,
-#             emb_size=emb_size,
-#         )
+    else:
+        ad.anomaly_detection(
+            project=project,
+            api_token=api_token,
+            k_smote=k_smote,
+            lora=lora,
+            r=r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            len_factor=len_factor,
+            batch_size=batch_size,
+            epochs=epochs,
+            loss_type=loss_type,
+            learning_rate=learning_rate,
+            step_warmup=step_warmup,
+            k_neighbors=k_neighbors,
+            scheduler_type=scheduler_type,
+            min_lr=min_lr,
+            margin=margin,
+            scale=scale,
+            emb_size=emb_size,
+        )
