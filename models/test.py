@@ -65,7 +65,6 @@ class AnomalyDetection(ModelDataPrepraration):
             len_factor=len_factor,
             HPO=HPO,
             list_machines=list_machines,
-            index_split=index_split,
         )
 
         # load model
@@ -693,8 +692,6 @@ class AnomalyDetection(ModelDataPrepraration):
         # save the hmean total to shared list
         list_shared_hmean.append(hmean_total)
 
-        return run
-
     def run_hmean_calculation_one_epoch_hpo(
         self,
         list_machines_combinations: list,
@@ -707,6 +704,7 @@ class AnomalyDetection(ModelDataPrepraration):
         """
         run the function hmean_calculation_one_epoch_hpo for all splits in parallel using multiprocessing
         """
+        # create the process
         processes = []
         manager = multiprocessing.Manager()
         list_shared_hmean = manager.list()
@@ -805,6 +803,7 @@ class AnomalyDetection(ModelDataPrepraration):
                 run = neptune.init_run(project=project, api_token=api_token)
 
             hmean_test_this_epoch = self.run_hmean_calculation_one_epoch_hpo(
+                run=run,
                 list_machines_combinations=list_machines_combinations,
                 number_trial=trial.number,
                 ep=ep,
@@ -871,6 +870,9 @@ if __name__ == "__main__":
 
     # hyperparameters optimization
     if HPO:
+        # Use 'spawn' to avoid CUDA issues
+        multiprocessing.set_start_method("spawn", force=False)
+
         # create directory for HPO
         path_hpo_directory = ad.path_hpo_directory
         os.makedirs(path_hpo_directory, exist_ok=True)
