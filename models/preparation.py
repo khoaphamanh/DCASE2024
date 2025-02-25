@@ -8,8 +8,6 @@ import numpy as np
 from loss import AdaCosLoss, ArcFaceLoss
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
-import neptune
-from neptune.utils import stringify_unsupported
 from torch.optim.lr_scheduler import (
     LambdaLR,
     CosineAnnealingWarmRestarts,
@@ -381,6 +379,7 @@ class ModelDataPrepraration(DataPreprocessing):
         loss_pretrained: nn.Module,
         optimizer: torch.optim.AdamW,
         hyperparameters: dict,
+        configuration: dict,
         scheduler: torch.optim.lr_scheduler.LambdaLR = None,
         knn_pretrained: list = None,
         scaler_pretrained: StandardScaler = None,
@@ -389,12 +388,12 @@ class ModelDataPrepraration(DataPreprocessing):
         save the pretrained model in pretrained_model directory
         """
         # get model name for hpo and not hpo
-        model_name = hyperparameters["name_model"]
+        name_saved_model = hyperparameters["name_saved_model"]
         HPO = hyperparameters["HPO"]
         path_pretrained_model_loss = (
-            os.path.join(self.path_pretrained_models_directory, model_name)
+            os.path.join(self.path_pretrained_models_directory, name_saved_model)
             if not HPO
-            else os.path.join(self.path_hpo_directory, model_name)
+            else os.path.join(self.path_hpo_directory, name_saved_model)
         )
 
         torch.save(
@@ -406,6 +405,7 @@ class ModelDataPrepraration(DataPreprocessing):
                 "knn_pretrained": knn_pretrained,
                 "scaler_pretrained": scaler_pretrained,
                 "hyperparameters": hyperparameters,
+                "configuration": configuration,
             },
             path_pretrained_model_loss,
         )
@@ -415,14 +415,11 @@ class ModelDataPrepraration(DataPreprocessing):
             path_pretrained_model_loss,
         )
 
-    def load_pretrained_model(self, pretrained_file: str):
+    def load_pretrained_model(self, pretrained_path: str):
         """
         load the pretrained model
         """
-        # load the state_dict given the pretrained_file
-        pretrained_path = os.path.join(
-            self.path_pretrained_models_directory, pretrained_file
-        )
+        # load the state_dict given the pretrained_path
         loaded_dict = torch.load(pretrained_path, map_location=self.device)
 
         # extract the state dict of each model from dictionary keys
@@ -433,6 +430,7 @@ class ModelDataPrepraration(DataPreprocessing):
         knn = loaded_dict["knn_pretrained"]
         scaler = loaded_dict["scaler_pretrained"]
         hyperparameters = loaded_dict["hyperparameters"]
+        configuration = loaded_dict["configuration"]
 
         # load model neural network
         emb_size = hyperparameters["emb_size"]
@@ -486,7 +484,16 @@ class ModelDataPrepraration(DataPreprocessing):
         )
         scheduler.load_state_dict(scheduler_state_dict)
 
-        return model, loss, optimizer, scheduler, knn, scaler, hyperparameters
+        return (
+            model,
+            loss,
+            optimizer,
+            scheduler,
+            hyperparameters,
+            configuration,
+            knn,
+            scaler,
+        )
 
     def perform_load_data(self, k_smote, HPO, batch_size, len_factor, list_machines):
         """
