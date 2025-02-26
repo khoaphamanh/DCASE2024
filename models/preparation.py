@@ -479,8 +479,12 @@ class ModelDataPrepraration(DataPreprocessing):
         # load scheduler
         step_warmup = hyperparameters["step_warmup"]
         min_lr = hyperparameters["min_lr"]
+        scheduler_type = hyperparameters["scheduler_type"]
         scheduler = self.load_scheduler(
-            optimizer=optimizer, step_warmup=step_warmup, min_lr=min_lr
+            optimizer=optimizer,
+            step_warmup=step_warmup,
+            min_lr=min_lr,
+            scheduler_type=scheduler_type,
         )
         scheduler.load_state_dict(scheduler_state_dict)
 
