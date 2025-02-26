@@ -694,9 +694,7 @@ class AnomalyDetection(ModelDataPrepraration):
         plt.close()
 
         # stop the run
-        epochs = hyperparameters["epochs"]
-        if ep == epochs - 1:
-            run.stop()
+        run.stop()
 
         # Save updated model and optimizer
         self.save_pretrained_model_loss(
