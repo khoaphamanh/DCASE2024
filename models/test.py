@@ -693,6 +693,11 @@ class AnomalyDetection(ModelDataPrepraration):
         run["score/auc_pauc_hmean"].append(hmean_img, step=ep)
         plt.close()
 
+        # stop the run
+        epochs = hyperparameters["epochs"]
+        if ep == epochs - 1:
+            run.stop()
+
         # Save updated model and optimizer
         self.save_pretrained_model_loss(
             model_pretrained=model,
