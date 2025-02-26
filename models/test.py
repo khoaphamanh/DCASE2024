@@ -120,6 +120,7 @@ class AnomalyDetection(ModelDataPrepraration):
             emb_size=emb_size,
             margin=margin,
             scale=scale,
+            scheduler_type=scheduler_type,
             name_saved_model=name_saved_model,
             input_size=input_size,
             num_classes_train=self.num_classes_attribute(),
@@ -141,11 +142,19 @@ class AnomalyDetection(ModelDataPrepraration):
 
         # shared dictionary
         if HPO and dict_data_shared is not None:
+            # init run
+            run = neptune.init_run(project=project, api_token=api_token)
+            run_id = run["sys/id"].fetch()
+            print("run_id:", run_id)
+
             dict_data_shared[index_split] = {
                 "smote": dataloader_smote_attribute,
                 "train": dataloader_train_attribute,
                 "test": dataloader_test_attribute,
             }
+            dict_data_shared[f"id_run_{index_split}"] = run_id
+
+            run.stop()
 
             # save model, loss and hyperparameters
             self.save_pretrained_model_loss(
@@ -575,8 +584,6 @@ class AnomalyDetection(ModelDataPrepraration):
         self,
         project: str,
         api_token: str,
-        id_run: str,
-        # run: neptune.init_run,
         number_trial: int,
         ep: int,
         index_split: int,
@@ -590,6 +597,7 @@ class AnomalyDetection(ModelDataPrepraration):
         """
         # reinit run
         print("rund_id hmean calculation")
+        id_run = dict_data_shared[f"id_run_{index_split}"]
         run = neptune.init_run(project=project, api_token=api_token, with_id=id_run)
 
         # load data for this split
@@ -705,8 +713,6 @@ class AnomalyDetection(ModelDataPrepraration):
         list_machines_combinations: list,
         project: str,
         api_token: str,
-        run_id: str,
-        # run: neptune.init_run,
         number_trial: int,
         ep: int,
         k_neighbors: int,
@@ -722,20 +728,11 @@ class AnomalyDetection(ModelDataPrepraration):
 
         for index_split, list_machines in enumerate(list_machines_combinations):
 
-            # init run if epoch 0
-            if ep == 0:
-                run = neptune.init_run(project=project, api_token=api_token)
-                run_id = run["sys/id"].fetch()
-                print("run_id:", run_id)
-                run.stop()
-
             p = multiprocessing.Process(
                 target=self.hmean_calculation_one_epoch_hpo,
                 args=(
-                    # run,
                     project,
                     api_token,
-                    run_id,
                     number_trial,
                     ep,
                     index_split,
@@ -821,7 +818,6 @@ class AnomalyDetection(ModelDataPrepraration):
         for ep in range(epochs):
 
             hmean_test_this_epoch = self.run_hmean_calculation_one_epoch_hpo(
-                # run=run,
                 project=project,
                 api_token=api_token,
                 list_machines_combinations=list_machines_combinations,
@@ -833,6 +829,7 @@ class AnomalyDetection(ModelDataPrepraration):
 
             # check for pruning
             hmean_test_this_epoch = np.mean(hmean_test_this_epoch)
+            print("hmean_test_this_epoch cross vali:", hmean_test_this_epoch)
             if trial.should_prune():
                 raise optuna.exceptions.TrialPruned()
 
@@ -913,11 +910,11 @@ if __name__ == "__main__":
         project = "DCASE2024/dcase-HPO1"
         api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
         k_smote = 5
-        batch_size = 8
-        num_train_machines = 3
-        num_splits = 2
+        batch_size = 12
+        num_train_machines = 5
+        num_splits = 5
         epochs = 50
-        len_factor = 0.01
+        len_factor = 0.5
 
         # objective functions
         def objective(trial: optuna.trial.Trial):
@@ -927,7 +924,7 @@ if __name__ == "__main__":
                 name="learning_rate", low=1e-7, high=1e-1, log=True
             )
 
-            step_warmup = trial.suggest_int(name="step_warmup", low=2, high=256, step=4)
+            step_warmup = trial.suggest_int(name="step_warmup", low=2, high=256, step=2)
 
             emb_size = trial.suggest_int(name="emb_size", low=2, high=2048, step=2)
 
