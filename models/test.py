@@ -114,6 +114,7 @@ class AnomalyDetection(ModelDataPrepraration):
             loss_type=loss_type,
             learning_rate=learning_rate,
             step_warmup=step_warmup,
+            min_lr=min_lr,
             k_neighbors=k_neighbors,
             HPO=HPO,
             emb_size=emb_size,
@@ -572,7 +573,10 @@ class AnomalyDetection(ModelDataPrepraration):
 
     def hmean_calculation_one_epoch_hpo(
         self,
-        run: neptune.init_run,
+        project: str,
+        api_token: str,
+        id_run: str,
+        # run: neptune.init_run,
         number_trial: int,
         ep: int,
         index_split: int,
@@ -584,6 +588,10 @@ class AnomalyDetection(ModelDataPrepraration):
         """
         calcualate hmean for one epoch
         """
+        # reinit run
+        print("rund_id hmean calculation")
+        run = neptune.init_run(project=project, api_token=api_token, with_id=id_run)
+
         # load data for this split
         dataloader_smote_attribute = dict_data_shared[index_split]["smote"]
         dataloader_test_attribute = dict_data_shared[index_split]["test"]
@@ -695,7 +703,10 @@ class AnomalyDetection(ModelDataPrepraration):
     def run_hmean_calculation_one_epoch_hpo(
         self,
         list_machines_combinations: list,
-        run: neptune.init_run,
+        project: str,
+        api_token: str,
+        run_id: str,
+        # run: neptune.init_run,
         number_trial: int,
         ep: int,
         k_neighbors: int,
@@ -710,10 +721,21 @@ class AnomalyDetection(ModelDataPrepraration):
         list_shared_hmean = manager.list()
 
         for index_split, list_machines in enumerate(list_machines_combinations):
+
+            # init run if epoch 0
+            if ep == 0:
+                run = neptune.init_run(project=project, api_token=api_token)
+                run_id = run["sys/id"].fetch()
+                print("run_id:", run_id)
+                run.stop()
+
             p = multiprocessing.Process(
                 target=self.hmean_calculation_one_epoch_hpo,
                 args=(
-                    run,
+                    # run,
+                    project,
+                    api_token,
+                    run_id,
                     number_trial,
                     ep,
                     index_split,
@@ -798,12 +820,10 @@ class AnomalyDetection(ModelDataPrepraration):
 
         for ep in range(epochs):
 
-            # init run if epoch 0
-            if ep == 0:
-                run = neptune.init_run(project=project, api_token=api_token)
-
             hmean_test_this_epoch = self.run_hmean_calculation_one_epoch_hpo(
-                run=run,
+                # run=run,
+                project=project,
+                api_token=api_token,
                 list_machines_combinations=list_machines_combinations,
                 number_trial=trial.number,
                 ep=ep,
@@ -814,10 +834,7 @@ class AnomalyDetection(ModelDataPrepraration):
             # check for pruning
             hmean_test_this_epoch = np.mean(hmean_test_this_epoch)
             if trial.should_prune():
-                run.stop()
                 raise optuna.exceptions.TrialPruned()
-
-        run.stop()
 
         return hmean_test_this_epoch
 
