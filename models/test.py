@@ -16,6 +16,7 @@ import optuna
 from optuna.trial import TrialState
 from preparation import ModelDataPrepraration
 import matplotlib.pyplot as plt
+import argparse
 
 
 # class Anomaly Detechtion
@@ -53,6 +54,14 @@ class AnomalyDetection(ModelDataPrepraration):
         """
         perform all steps are needed before training, load model, load loss, optimizer, hyperapameters dict
         """
+        # batchsize based on vram
+        if self.vram < 11:
+            batch_size = 12
+        elif 11 <= self.vram < 25:
+            batch_size = 25
+        else:
+            batch_size = 64
+
         # load data
         (
             dataloader_smote_attribute,
@@ -77,6 +86,8 @@ class AnomalyDetection(ModelDataPrepraration):
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
         )
+        if emb_size == None:
+            emb_size = model.embedding_asp
 
         # load loss
         loss = self.perform_load_loss(
@@ -344,6 +355,7 @@ class AnomalyDetection(ModelDataPrepraration):
                 ep=ep,
                 model=model,
                 loss=loss,
+                scheduler=scheduler,
                 dataloader_attribute=dataloader_smote_attribute,
                 optimizer=optimizer,
                 hyperparameters=hyperparameters,
@@ -363,6 +375,7 @@ class AnomalyDetection(ModelDataPrepraration):
                     ep=ep,
                     model=model,
                     loss=loss,
+                    scheduler=scheduler,
                     dataloader_attribute=dataloader_train_attribute,
                     optimizer=optimizer,
                     hyperparameters=hyperparameters,
@@ -381,6 +394,7 @@ class AnomalyDetection(ModelDataPrepraration):
                 ep=ep,
                 model=model,
                 loss=loss,
+                scheduler=scheduler,
                 dataloader_attribute=dataloader_test_attribute,
                 optimizer=optimizer,
                 hyperparameters=hyperparameters,
@@ -396,13 +410,6 @@ class AnomalyDetection(ModelDataPrepraration):
                 y_pred_test_array=y_pred_label_test_array,
                 y_true_test_array=y_true_test_array,
             )
-
-            # update scheduler
-            scheduler.step()
-
-            # log the learning rate
-            current_lr = optimizer.param_groups[0]["lr"]
-            run["smote_uniform/current_lr"].append(current_lr, step=ep)
 
             # accuracy decision
             if not HPO:
@@ -444,7 +451,7 @@ class AnomalyDetection(ModelDataPrepraration):
         ep: int,
         model: nn.Module,
         loss: AdaCosLoss,
-        dataloader_attribute: DataLoader,
+        scheduler: torch.optim.lr_scheduler,
         optimizer: torch.optim.AdamW,
         hyperparameters: dict,
         type_labels=["train_source_normal", "train_target_normal"],
@@ -532,6 +539,13 @@ class AnomalyDetection(ModelDataPrepraration):
                     # update weights with optimizer
                     optimizer.step()
                     optimizer.zero_grad()
+
+                    # update scheduler
+                    scheduler.step()
+
+                    # log the learning rate
+                    current_lr = optimizer.param_groups[0]["lr"]
+                    run["smote_uniform/current_lr"].append(current_lr, step=ep)
 
             # calculate accuracy, confusion matrix for train and test data
             if type_data in ["train", "test"]:
@@ -640,6 +654,7 @@ class AnomalyDetection(ModelDataPrepraration):
             ep=ep,
             model=model,
             loss=loss,
+            scheduler=scheduler,
             dataloader_attribute=dataloader_smote_attribute,
             optimizer=optimizer,
             hyperparameters=hyperparameters,
@@ -658,6 +673,7 @@ class AnomalyDetection(ModelDataPrepraration):
             ep=ep,
             model=model,
             loss=loss,
+            scheduler=scheduler,
             dataloader_attribute=dataloader_test_attribute,
             optimizer=optimizer,
             hyperparameters=hyperparameters,
@@ -860,8 +876,8 @@ if __name__ == "__main__":
     project = "DCASE2024/wav-test"
     api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
     k_smote: int = 5
-    batch_size: int = 64
-    len_factor: float = 0.1
+    batch_size: int = 12
+    len_factor: float = 0.2
     epochs: int = 50
     lora: bool = False
     r: int = 8
@@ -877,13 +893,29 @@ if __name__ == "__main__":
     min_lr: float = None
     k_neighbors: int = 2
 
-    # hyperaparameter for hpo
+    # fix hyperaparameter for hpo
     trial: optuna.trial.Trial = None
     index_split = None
     num_train_machines: int = 5
     num_splits: int = 5
     list_machines = None
-    HPO: bool = True
+
+    # hpo argument argparse
+    parser = argparse.ArgumentParser(description="Ein einfaches Beispiel für argparse.")
+    parser.add_argument(
+        "-m",
+        "--mode",
+        type=str,
+        help="choose run mode between 'reimplement' or 'hpo', default is 'reimplement'",
+        choices=["reimplement", "hpo"],
+        default="reimplement",
+    )
+    args = parser.parse_args()
+
+    if args.mode == "reimplement":
+        HPO: bool = False
+    elif args.mode == "hpo":
+        HPO: bool = True
 
     # hyperparameters optimization
     if HPO:
@@ -910,7 +942,7 @@ if __name__ == "__main__":
         n_trials_total = 100
 
         # fix hyperparameters
-        project = "DCASE2024/dcase-HPO1"
+        project = "DCASE2024/dcase-HPO"
         api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
         k_smote = 5
         batch_size = 12
