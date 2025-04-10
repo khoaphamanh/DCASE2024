@@ -345,7 +345,7 @@ class ModelDataPrepraration(DataPreprocessing):
         # pop function for a given dict
         def dict_pop(dictionary: dict, *arg):
             """
-            function to pop the
+            function to pop the keys and values
             """
             for i in arg:
                 dictionary.pop(i, None)
