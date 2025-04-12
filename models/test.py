@@ -58,7 +58,7 @@ class AnomalyDetection(ModelDataPrepraration):
         if self.vram < 11:
             batch_size = 12
         elif 11 <= self.vram < 25:
-            batch_size = 25
+            batch_size = 30
         else:
             batch_size = 64
 
@@ -109,6 +109,7 @@ class AnomalyDetection(ModelDataPrepraration):
 
         # save the hyperparameters and configuration
         name_saved_model = self.name_saved_model(index_split=index_split)
+        num_iterations_smote = len(dataloader_smote_attribute)
 
         # hyperparameters dict and and configuration dict
         hyperparameters = self.hyperparameters_configuration_dict(
@@ -122,6 +123,7 @@ class AnomalyDetection(ModelDataPrepraration):
             len_factor=len_factor,
             list_machines=list_machines,
             num_instances_smote=num_instances_smote,
+            num_iterations_smote=num_iterations_smote,
             loss_type=loss_type,
             learning_rate=learning_rate,
             step_warmup=step_warmup,
@@ -451,6 +453,7 @@ class AnomalyDetection(ModelDataPrepraration):
         ep: int,
         model: nn.Module,
         loss: AdaCosLoss,
+        dataloader_attribute: DataLoader,
         scheduler: torch.optim.lr_scheduler,
         optimizer: torch.optim.AdamW,
         hyperparameters: dict,
@@ -465,6 +468,7 @@ class AnomalyDetection(ModelDataPrepraration):
         batch_size = hyperparameters["batch_size"]
         num_instances_smote = hyperparameters["num_instances_smote"]
         list_machines = hyperparameters["list_machines"]
+        num_iterations_smote = hyperparameters["num_iterations_smote"]
 
         # y_true, y_pred, embedding array
         type_data = type_labels[0].split("_")[0]
@@ -545,7 +549,9 @@ class AnomalyDetection(ModelDataPrepraration):
 
                     # log the learning rate
                     current_lr = optimizer.param_groups[0]["lr"]
-                    run["smote_uniform/current_lr"].append(current_lr, step=ep)
+                    run["smote_uniform/current_lr"].append(
+                        current_lr, step=iter_mode + ep * num_iterations_smote
+                    )
 
             # calculate accuracy, confusion matrix for train and test data
             if type_data in ["train", "test"]:
@@ -877,7 +883,7 @@ if __name__ == "__main__":
     api_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJiODUwOWJmNy05M2UzLTQ2ZDItYjU2MS0yZWMwNGI1NDI5ZjAifQ=="
     k_smote: int = 5
     batch_size: int = 12
-    len_factor: float = 0.2
+    len_factor: float = 1.0
     epochs: int = 50
     lora: bool = False
     r: int = 8
